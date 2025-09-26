@@ -3,21 +3,21 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Edge Dots — Clean Dissolve</title>
+<title>Edge Dissolve — Fast Field</title>
 <style>
   html,body{height:100%;margin:0;background:#000;overflow:hidden}
   #out{position:fixed;inset:0;display:block;width:100vw;height:100vh}
   #v{display:none}
   #gate{position:fixed;inset:0;display:none;place-items:center;background:#000a;color:#0f8;font:16px system-ui}
-  #gate .box{border:1px solid #0f8;padding:16px 20px;border-radius:10px}
-  #hud{position:fixed;left:12px;bottom:12px;color:#9ef;background:#0008;padding:8px 10px;border:1px solid #395;border-radius:10px;font:12px ui-monospace,system-ui}
-  #hud b{color:#cfe}
+  #gate .box{border:1px solid #0f8;padding:10px 14px;border-radius:10px}
+  #hud{position:fixed;left:12px;bottom:12px;color:#bff;background:#0008;padding:8px 10px;border:1px solid #395;border-radius:10px;font:12px ui-monospace,system-ui}
+  #hud b{color:#eff}
 </style>
 </head>
 <body>
 <canvas id="out"></canvas>
 <video id="v" playsinline muted></video>
-<div id="gate"><div class="box">Camera permission needed — click to start</div></div>
+<div id="gate"><div class="box">Click to allow camera</div></div>
 <div id="hud"></div>
 
 <script>
@@ -25,192 +25,228 @@
   const v = document.getElementById('v');
   const cnv = document.getElementById('out');
   const g = cnv.getContext('2d', { willReadFrequently:true });
+  const hud = document.getElementById('hud');
   const gate = document.getElementById('gate');
-  const hud  = document.getElementById('hud');
 
-  /* ---------- minimal + fast knobs ---------- */
-  const MAX_SAMPLE_W = 720;   // analysis width (downscaled)
-  let   GRID = 3;             // edge sampling step (↓ = more dots)
-  let   DOT  = 1.0;           // dot size (display px; supports <1)
-  const EDGE_T = 55;          // Sobel magnitude threshold
-  const FADE  = 0.035;        // life decay per frame (0.03–0.06 = short)
-  const TRAIL = 0.35;         // frame fade to black (higher = less smear)
-  const TINT  = [160,255,210]; // mint
-  const CAP_DPR = 1;          // cap DPR for speed
-  const MAX_PARTICLES = 80000; // pool size (kept modest)
-  let   SPAWN_MULT = 1.0;     // spawn intensity
-  /* ----------------------------------------- */
+  /* ---------- knobs tuned for speed ---------- */
+  const MAX_SAMPLE_W = 720;     // downscaled analysis width
+  let   GRID = 3;               // edge sampling step
+  let   DOT  = 1.2;             // dot size (supports <1)
+  const EDGE_T = 52;            // Sobel threshold
+  const TRAIL  = 0.44;          // fade-to-black per frame (higher = less tail)
+  const LIFE_STEP = 0.045;      // fade-out speed (higher = faster dissolve)
+  const V_DAMP = 0.90;          // particle velocity damping
+  const ADD_GAIN = 0.18;        // additive brightness
+  const TINT = [160,255,210];   // mint color
+  const CAP_DPR = 1;
+  let   SPAWN_MULT = 1.0;       // base spawn intensity
+  let   autoT = true;           // auto throttle on
+  /* ------------------------------------------ */
 
-  // particle pool (no noise, tiny one-shot drift)
-  const px = new Float32Array(MAX_PARTICLES);
-  const py = new Float32Array(MAX_PARTICLES);
-  const vx = new Float32Array(MAX_PARTICLES);
-  const vy = new Float32Array(MAX_PARTICLES);
-  const life = new Float32Array(MAX_PARTICLES);
-  const size = new Float32Array(MAX_PARTICLES);
-  let head = 0;
+  // particles (pooled)
+  const MAX_PARTICLES = 80000;  // lower than before for FPS
+  const px=new Float32Array(MAX_PARTICLES), py=new Float32Array(MAX_PARTICLES);
+  const vx=new Float32Array(MAX_PARTICLES), vy=new Float32Array(MAX_PARTICLES);
+  const life=new Float32Array(MAX_PARTICLES), size=new Float32Array(MAX_PARTICLES);
+  let head=0;
 
-  function spawn(x,y,dx,dy,mag){
-    const i = head; head = (head+1) % MAX_PARTICLES;
+  function spawn(x,y,nx,ny,mag){
+    const i=head; head=(head+1)%MAX_PARTICLES;
     px[i]=x; py[i]=y;
-    // small push along outward normal, then quickly damped
-    const nrm = Math.atan2(dy, dx);
-    const spd = Math.min(1.0, mag/200) * 0.6; // tiny nudge
-    vx[i]=Math.cos(nrm)*spd;
-    vy[i]=Math.sin(nrm)*spd;
+    const spd = Math.min(1, mag/200)*0.45;     // small kick
+    vx[i]=nx*spd; vy[i]=ny*spd;
     life[i]=1.0;
-    size[i]=DOT * (0.85 + Math.random()*0.3);
+    size[i]=DOT*(0.85+Math.random()*0.35);
   }
 
-  // sizing with capped DPR
+  // flow field (small grid → cheap)
+  let FW=0,FH=0,fieldX=null,fieldY=null,fieldTime=0,fieldNext=0;
+  function ensureField(w,h){
+    const targetCell = 32; // ~32px per cell at display scale
+    FW = Math.max(16, Math.round(w/targetCell));
+    FH = Math.max(12, Math.round(h/targetCell));
+    fieldX = new Float32Array(FW*FH);
+    fieldY = new Float32Array(FW*FH);
+  }
+  function updateField(t){
+    // update ~8 times/sec
+    if (t < fieldNext) return;
+    fieldNext = t + 0.12;
+    // light sinusoidal warp across grid (few trig calls)
+    const ax = 0.45, ay = 0.45, fx = 0.8, fy = 0.6;
+    for (let j=0;j<FH;j++){
+      for (let i=0;i<FW;i++){
+        const u = i/FW, v = j/FH;
+        const a = Math.sin((u*fx + t*0.15)*6.283);
+        const b = Math.cos((v*fy - t*0.13)*6.283);
+        // normalized, gentle rotation-like field
+        const dx = a*ax, dy = b*ay;
+        const len = Math.hypot(dx,dy)||1;
+        fieldX[j*FW+i] = dx/len*0.25;  // very small influence
+        fieldY[j*FW+i] = dy/len*0.25;
+      }
+    }
+  }
+  function sampleField(x,y){
+    // nearest cell (kept cheap for speed)
+    const ci = Math.max(0, Math.min(FW-1, (x/cnv.width*FW)|0));
+    const cj = Math.max(0, Math.min(FH-1, (y/cnv.height*FH)|0));
+    const k = cj*FW+ci;
+    return [fieldX[k], fieldY[k]];
+  }
+
+  // canvas sizing
   function resize(){
-    const dpr = Math.min(CAP_DPR, window.devicePixelRatio||1);
-    const w = Math.max(1, Math.floor(innerWidth*dpr));
-    const h = Math.max(1, Math.floor(innerHeight*dpr));
+    const dpr=Math.min(CAP_DPR, window.devicePixelRatio||1);
+    const w=Math.max(1, Math.floor(innerWidth*dpr));
+    const h=Math.max(1, Math.floor(innerHeight*dpr));
     cnv.width=w; cnv.height=h;
     cnv.style.width=innerWidth+'px';
     cnv.style.height=innerHeight+'px';
     g.setTransform(dpr,0,0,dpr,0,0);
+    ensureField(w,h);
   }
   resize(); addEventListener('resize', resize);
 
-  // offscreen buffer
-  let buf = document.createElement('canvas');
-  let gb  = buf.getContext('2d', { willReadFrequently:true });
+  // offscreen buffer for analysis
+  let buf=document.createElement('canvas');
+  let gb =buf.getContext('2d', { willReadFrequently:true });
 
-  function luma(r,g,b){ return 0.2126*r + 0.7152*g + 0.0722*b; }
+  function luma(r,g,b){ return 0.2126*r+0.7152*g+0.0722*b; }
 
-  // reuse luma array when size stable
-  let Y=null, yW=0, yH=0;
-
-  let fps=60, last=performance.now(), showHUD=true;
+  // HUD
+  let fps=60,last=performance.now(),showHUD=true;
   function drawHUD(){
     if(!showHUD){ hud.style.display='none'; return; }
     hud.style.display='block';
-    hud.innerHTML =
-      `<b>Edge Dots — Clean Dissolve</b> • ${fps.toFixed(0)} fps<br>
-       GRID ${GRID}px • DOT ${DOT.toFixed(2)}px • Spawn ${SPAWN_MULT.toFixed(2)}<br>
-       [ / ] grid • - / = dot • ; / ' spawn • C clear • H HUD`;
+    hud.innerHTML = `<b>Edge Dissolve — Fast Field</b> • ${fps.toFixed(0)} fps<br>
+    GRID ${GRID}px • DOT ${DOT.toFixed(2)}px • Spawn ${SPAWN_MULT.toFixed(2)} • ${autoT?'Auto':'Manual'}<br>
+    [ / ] grid • - / = dot • ; / ' spawn • F auto • C clear • H HUD`;
   }
 
   function loop(){
-    const now = performance.now();
-    const dt = Math.min(50, now - last); last = now;
-    fps = 1000 / Math.max(1, dt);
+    const now=performance.now();
+    const dt = Math.min(50, now-last); last=now;
+    fps = 1000/Math.max(1,dt);
 
-    // quick fade to black (short trails)
-    g.fillStyle = `rgba(0,0,0,${TRAIL})`;
+    // stronger fade → shorter tails, less accumulation
+    g.fillStyle=`rgba(0,0,0,${TRAIL})`;
     g.fillRect(0,0,cnv.width,cnv.height);
 
-    const vw = v.videoWidth||640, vh = v.videoHeight||480;
+    // prep field
+    updateField(now*0.001);
 
-    // cover scaling; sample downscaled frame
-    const coverScale = Math.max(cnv.width/vw, cnv.height/vh);
-    const drawW = Math.min(MAX_SAMPLE_W, Math.ceil(vw*coverScale));
-    const drawH = Math.ceil(drawW * (vh/vw));
-    if (yW!==drawW || yH!==drawH){ Y = new Float32Array(drawW*drawH); yW=drawW; yH=drawH; }
+    const vw=v.videoWidth||640, vh=v.videoHeight||480;
+    const coverScale=Math.max(cnv.width/vw, cnv.height/vh);
+    const drawW=Math.min(MAX_SAMPLE_W, Math.ceil(vw*coverScale));
+    const drawH=Math.ceil(drawW*(vh/vw));
+    buf.width=drawW; buf.height=drawH;
+    gb.drawImage(v,0,0,drawW,drawH);
+    const img=gb.getImageData(0,0,drawW,drawH).data;
 
-    buf.width = drawW; buf.height = drawH;
-    gb.drawImage(v, 0, 0, drawW, drawH);
-    const img = gb.getImageData(0,0,drawW,drawH).data;
+    const dispW=vw*coverScale, dispH=vh*coverScale;
+    const ox=(cnv.width-dispW)/2, oy=(cnv.height-dispH)/2;
+    const sx=dispW/drawW, sy=dispH/drawH;
 
-    const dispW = vw*coverScale, dispH = vh*coverScale;
-    const ox = (cnv.width - dispW)/2, oy = (cnv.height - dispH)/2;
-    const sx = dispW/drawW, sy = dispH/drawH;
-
-    // luma
-    for (let y=0,i=0,p=0; y<drawH; y++){
-      for (let x=0; x<drawW; x++,i++,p+=4){
-        Y[i] = luma(img[p],img[p+1],img[p+2]);
-      }
+    // luma (reuse local typed array to avoid GC)
+    const Y=new Uint8Array(drawW*drawH);
+    for(let y=0,i=0,p=0;y<drawH;y++){
+      for(let x=0;x<drawW;x++,i++,p+=4){ Y[i]=luma(img[p],img[p+1],img[p+2])|0; }
     }
 
-    // Sobel (edge → minimal spawn)
-    const Gx = [-1,0,1,-2,0,2,-1,0,1];
-    const Gy = [-1,-2,-1,0,0,0,1,2,1];
+    // per-frame spawn budget with auto-throttle
+    let budgetBase = 14000;
+    if (autoT){
+      if (fps<48) budgetBase*=0.7;
+      else if (fps>56) budgetBase*=1.15;
+    }
+    let budget = budgetBase|0;
 
-    // cap spawns per frame to avoid spikes
-    let budget = 20000; // hard upper limit per frame
-
-    for (let y=1; y<drawH-1; y+=GRID){
-      const row = y*drawW;
-      for (let x=1; x<drawW-1; x+=GRID){
-        // 3x3 Sobel
+    // Sobel edges → spawn
+    const Gx=[-1,0,1,-2,0,2,-1,0,1], Gy=[-1,-2,-1,0,0,0,1,2,1];
+    for(let y=1;y<drawH-1;y+=GRID){
+      const row=y*drawW;
+      for(let x=1;x<drawW-1;x+=GRID){
         let sxv=0, syv=0, k=0;
-        for (let j=-1;j<=1;j++){
-          const r = row + j*drawW;
-          for (let i=-1;i<=1;i++,k++){
-            const val = Y[r + x + i];
-            sxv += Gx[k]*val; syv += Gy[k]*val;
+        for(let j=-1;j<=1;j++){
+          const r=row+j*drawW;
+          for(let i=-1;i<=1;i++,k++){
+            const val=Y[r+x+i];
+            sxv+=Gx[k]*val; syv+=Gy[k]*val;
           }
         }
-        const mag = Math.hypot(sxv, syv);
-        if (mag < EDGE_T) continue;
+        const mag=Math.hypot(sxv,syv);
+        if(mag<EDGE_T) continue;
 
-        // probabilistic spawn to hold density without flooding
-        let n = (mag-EDGE_T)*0.01*SPAWN_MULT; // ~0..1
-        if (n>1) n=1;
-        if (Math.random() < n && budget>0){
-          const cx = ox + x*sx + (Math.random()-0.5)*sx*GRID*0.2;
-          const cy = oy + y*sy + (Math.random()-0.5)*sy*GRID*0.2;
-          spawn(cx, cy, sxv, syv, mag);
+        // normalized outward direction
+        const len = mag||1;
+        const nx = sxv/len, ny = syv/len;
+
+        // probabilistic spawn (keeps density even)
+        let n=(mag-EDGE_T)*0.012*SPAWN_MULT; if(n>1)n=1;
+        if (Math.random()<n && budget>0){
+          const cx=ox+x*sx+(Math.random()-0.5)*sx*GRID*0.25;
+          const cy=oy+y*sy+(Math.random()-0.5)*sy*GRID*0.25;
+          spawn(cx,cy,nx,ny,mag);
           budget--;
         }
+        if (budget<=0) break;
       }
+      if (budget<=0) break;
     }
 
-    // update & draw dots (no glow, source-over)
-    g.fillStyle = `rgba(${TINT[0]},${TINT[1]},${TINT[2]},1)`;
-    g.globalCompositeOperation = 'source-over';
-    for (let i=0; i<MAX_PARTICLES; i++){
-      if (life[i] <= 0) continue;
-      // minimal movement: brief nudge then stop
-      px[i] += vx[i];
-      py[i] += vy[i];
-      vx[i] *= 0.85; vy[i] *= 0.85; // quickly damp to zero
+    // draw particles (additive but clamped)
+    g.globalCompositeOperation='lighter';
+    const col = `rgba(${TINT[0]},${TINT[1]},${TINT[2]},${ADD_GAIN})`;
+    g.fillStyle = col;
 
-      // fade out
-      life[i] -= FADE;
-      if (life[i] <= 0){ life[i]=0; continue; }
+    for(let i=0;i<MAX_PARTICLES;i++){
+      if(life[i]<=0) continue;
 
-      const a = 0.22 * life[i];
-      if (a < 0.01){ life[i]=0; continue; }
-      g.globalAlpha = a;
-      const s = size[i] * (0.7 + 0.3*life[i]);
-      g.fillRect(px[i], py[i], s, s);
+      // sample precomputed field (no trig)
+      const f=sampleField(px[i],py[i]);
+      vx[i]+=f[0]; vy[i]+=f[1];
+
+      // integrate & damp
+      px[i]+=vx[i];
+      py[i]+=vy[i];
+      vx[i]*=V_DAMP; vy[i]*=V_DAMP;
+
+      // fade out fast → fewer live particles → more FPS
+      life[i]-=LIFE_STEP;
+      if(life[i]<=0){ life[i]=0; continue; }
+
+      const s=size[i]*(0.65+0.35*life[i]);
+      g.fillRect(px[i],py[i],s,s);
     }
-    g.globalAlpha = 1;
+    g.globalCompositeOperation='source-over';
 
     drawHUD();
     requestAnimationFrame(loop);
   }
 
+  // camera + controls
   async function startCam(){
     try{
-      const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user' }, audio:false });
-      v.srcObject = stream; await v.play();
-      loop();
-    }catch(e){
-      gate.style.display='grid';
-      console.warn('Camera start failed:', e);
-    }
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false});
+      v.srcObject=stream; await v.play(); loop();
+    }catch(e){ gate.style.display='grid'; console.warn(e); }
   }
+  window.addEventListener('load', startCam);
+  gate.addEventListener('click', ()=>{ gate.style.display='none'; startCam(); });
 
-  // controls
-  addEventListener('keydown', (e)=>{
-    if (e.key==='[') GRID = Math.min(12, GRID+1);
-    else if (e.key===']') GRID = Math.max(2, GRID-1);
-    else if (e.key==='-') DOT = Math.max(0.5, DOT-0.1);
-    else if (e.key==='=') DOT = Math.min(2.0, DOT+0.1);
-    else if (e.key===';') SPAWN_MULT = Math.max(0.3, SPAWN_MULT*0.9);
-    else if (e.key==="'") SPAWN_MULT = Math.min(2.5, SPAWN_MULT*1.1);
-    else if (e.key==='c' || e.key==='C'){ for(let i=0;i<MAX_PARTICLES;i++) life[i]=0; }
-    else if (e.key==='h' || e.key==='H') showHUD = !showHUD;
+  addEventListener('keydown',(e)=>{
+    if(e.key==='[') GRID = Math.min(10, GRID+1);
+    else if(e.key===']') GRID = Math.max(2, GRID-1);
+    else if(e.key==='-') DOT = Math.max(0.6, DOT-0.1);
+    else if(e.key==='=') DOT = Math.min(2.2, DOT+0.1);
+    else if(e.key===';') SPAWN_MULT = Math.max(0.3, SPAWN_MULT*0.9);
+    else if(e.key==="'") SPAWN_MULT = Math.min(2.5, SPAWN_MULT*1.1);
+    else if(e.key==='f'||e.key==='F') autoT=!autoT;
+    else if(e.key==='c'||e.key==='C'){ for(let i=0;i<MAX_PARTICLES;i++) life[i]=0; }
+    else if(e.key==='h'||e.key==='H') showHUD=!showHUD;
     drawHUD();
   });
-
-  window.addEventListener('load', startCam);
-  gate.addEventListener('click', async ()=>{ gate.style.display='none'; await startCam(); });
 
   drawHUD();
 })();
