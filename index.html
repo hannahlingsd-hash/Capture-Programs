@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Matrix Point-Cloud (Webcam) — Ghosty</title>
+<title>Ghostly Point Cloud — Webcam</title>
 <style>
   html,body{height:100%;margin:0;background:#000;overflow:hidden}
   #out{position:fixed;inset:0;display:block;width:100vw;height:100vh}
@@ -24,22 +24,33 @@
   const g = cnv.getContext('2d', { willReadFrequently:true });
   const gate = document.getElementById('gate');
 
-  /* -------- tuned for smaller, ghostier dots -------- */
-  const MAX_SAMPLE_W = 520;   // 480–600 = detail/speed tradeoff
-  const GRID = 4;             // denser grid (3 = ultra dense, heavier)
-  const MAX_R = 1.6;          // much smaller dots
-  const JITTER = 0.65;        // break the grid feel inside each cell
-  const TRAIL = 0.08;         // lower = longer persistence (ghostier)
-  const CONTRAST = 1.18;      // gentle contrast
-  const BRIGHT = 0;           // overall offset
-  const GAMMA = 0.85;         // <1 brightens shadows a bit, keeps figure
-  const BASE_A = 0.02;        // base alpha
-  const SCALE_A = 0.28;       // alpha gain with brightness
-  const GREEN = [0,255,120];  // matrix green
-  const CAP_DPR = 1;          // TD: keep 1 for speed
-  /* -------------------------------------------------- */
+  /* ---------- Ghostly knobs (fast in TD) ---------- */
+  const MAX_SAMPLE_W = 520;     // 400–600 = detail/speed tradeoff
+  const GRID = 3;               // 3=very dense, 4=faster
+  const MAX_R = 1.6;            // soft-dot radius max
+  const BASE_A = 0.025;         // base alpha
+  const SCALE_A = 0.24;         // alpha gain with brightness
+  const JITTER = 0.55;          // in-cell jitter to break the grid
+  const TRAIL = 0.06;           // canvas fade per frame (lower = longer ghost)
+  const CONTRAST = 1.12;        // gentle contrast
+  const GAMMA = 0.90;           // <1 lifts shadows (keeps background)
+  const BRIGHT = 0;             // offset
+  const DIFF_T = 0.10;          // dissolve sensitivity on motion (0..1)
+  const VOID_DECAY = 0.94;      // how fast motion "holes" heal (0.90..0.98)
+  const GREEN = [0,255,120];    // matrix green
+  const CAP_DPR = 1;            // keep 1 for TouchDesigner
+  /* ------------------------------------------------ */
 
   let running = false;
+
+  // prebuilt soft “splat” sprite (green radial gradient)
+  const spr = document.createElement('canvas');
+  spr.width = spr.height = 32;
+  const sg = spr.getContext('2d');
+  const gr = sg.createRadialGradient(16,16,0,16,16,16);
+  gr.addColorStop(0, `rgba(${GREEN[0]},${GREEN[1]},${GREEN[2]},1)`);
+  gr.addColorStop(1, `rgba(${GREEN[0]},${GREEN[1]},${GREEN[2]},0)`);
+  sg.fillStyle = gr; sg.fillRect(0,0,32,32);
 
   function luma(r,g,b){ return 0.2126*r + 0.7152*g + 0.0722*b; }
 
@@ -51,77 +62,99 @@
     cnv.style.width = innerWidth + 'px';
     cnv.style.height = innerHeight + 'px';
     g.setTransform(dpr,0,0,dpr,0,0);
+    g.imageSmoothingEnabled = true; // soft splats
   }
   resize(); addEventListener('resize', resize);
 
-  // offscreen buffer for cheap sampling
+  // downscale buffer for sampling
   const buf = document.createElement('canvas');
   const gb  = buf.getContext('2d', { willReadFrequently:true });
 
+  // per-sample history arrays (on the GRID lattice)
+  let prevL = null;     // previous luminance per lattice cell [0..1]
+  let voidMask = null;  // motion “hole” amount per lattice cell [0..1]
+  let nx = 0, ny = 0;   // lattice dims
+
+  // deterministic micro-jitter to avoid shimmering
   let tFrame = 0;
+  function jhash(x,y){
+    const s = Math.sin((x*374761393 ^ y*668265263) + tFrame*0.618) * 43758.5453;
+    return (s - Math.floor(s)) - 0.5; // [-0.5,0.5]
+  }
 
   function loop() {
     if (!running) return;
 
-    // subtle persistence / ghosting
+    // canvas ghosting
     g.fillStyle = `rgba(0,0,0,${TRAIL})`;
     g.fillRect(0,0,cnv.width,cnv.height);
 
     const vw = v.videoWidth || 640, vh = v.videoHeight || 480;
 
-    // draw into a downscaled buffer and sample from there
+    // draw into downscaled buffer
     const coverScale = Math.max(cnv.width / vw, cnv.height / vh);
     const drawW = Math.min(MAX_SAMPLE_W, Math.ceil(vw * coverScale));
     const drawH = Math.ceil(drawW * (vh / vw));
-
-    buf.width = drawW;
-    buf.height = drawH;
+    buf.width = drawW; buf.height = drawH;
     gb.drawImage(v, 0, 0, drawW, drawH);
-
     const img = gb.getImageData(0, 0, drawW, drawH).data;
 
-    // map sampled grid to display
-    const dispW = vw * coverScale;
-    const dispH = vh * coverScale;
+    // grid lattice dims + buffers
+    const gx = Math.floor(drawW/GRID), gy = Math.floor(drawH/GRID);
+    if (gx !== nx || gy !== ny || !prevL) {
+      nx = gx; ny = gy;
+      prevL = new Float32Array(nx*ny);
+      voidMask = new Float32Array(nx*ny);
+      prevL.fill(0); voidMask.fill(0);
+    }
+
+    // map grid to display
+    const dispW = vw * coverScale, dispH = vh * coverScale;
     const ox = (cnv.width - dispW)/2, oy = (cnv.height - dispH)/2;
     const sx = dispW / drawW, sy = dispH / drawH;
 
-    const prevOp = g.globalCompositeOperation;
+    // additive glow for soft layering
+    const oldComp = g.globalCompositeOperation;
     g.globalCompositeOperation = 'lighter';
 
-    // deterministic tiny jitter (less “TV static” than Math.random per sample)
-    const seed = tFrame * 0.6180339887; // golden ratio step
-    function jhash(x,y){
-      // quick hash → [-0.5, 0.5]
-      const s = Math.sin((x*374761393 ^ y*668265263) + seed) * 43758.5453;
-      return (s - Math.floor(s)) - 0.5;
-    }
-
-    for (let y = 0; y < drawH; y += GRID) {
-      for (let x = 0; x < drawW; x += GRID) {
+    let j = 0;
+    for (let gy_i = 0; gy_i < ny; gy_i++) {
+      const y = gy_i * GRID;
+      for (let gx_i = 0; gx_i < nx; gx_i++, j++) {
+        const x = gx_i * GRID;
         const i = ((y * drawW) + x) * 4;
-        const r = img[i], gg = img[i+1], b = img[i+2];
 
-        // tone-map luminance (gamma + contrast)
-        let L = ((luma(r,gg,b) - 128) * CONTRAST + 128) + BRIGHT;
-        if (L < 0) L = 0; else if (L > 255) L = 255;
-        const t = Math.pow(L/255, GAMMA);   // 0..1
+        // tone-mapped luminance → 0..1
+        let L = luma(img[i], img[i+1], img[i+2]); // 0..255
+        L = ((L-128)*CONTRAST + 128) + BRIGHT;    // contrast + offset
+        L = Math.min(255, Math.max(0, L)) / 255;
+        L = Math.pow(L, GAMMA);
 
-        // tiny dots + ghosty alpha
-        const radius = 0.25 + t * MAX_R;
-        const alpha  = BASE_A + t * SCALE_A;
+        // motion → increase local "void" (points dissolve), then heal over time
+        const diff = Math.abs(L - prevL[j]);      // 0..1
+        prevL[j] = L;
+        if (diff > DIFF_T) voidMask[j] = 1;
+        else voidMask[j] *= VOID_DECAY;
 
-        // jitter within the cell (break the grid)
-        const jx = jhash(x,y) * GRID * JITTER * sx;
-        const jy = jhash(y,x) * GRID * JITTER * sy;
+        // opacity/size from brightness, attenuated by void
+        const a = (BASE_A + L * SCALE_A) * (1 - voidMask[j]);
+        if (a <= 0.002) continue;
 
-        g.fillStyle = `rgba(${GREEN[0]},${GREEN[1]},${GREEN[2]},${alpha})`;
-        g.beginPath();
-        g.arc(ox + x * sx + jx, oy + y * sy + jy, radius, 0, Math.PI*2);
-        g.fill();
+        const r = 0.25 + L * MAX_R;
+
+        // micro-jitter inside cell to break the matrix look
+        const jx = jhash(gx_i, gy_i) * GRID * JITTER * sx;
+        const jy = jhash(gy_i, gx_i) * GRID * JITTER * sy;
+
+        const X = ox + x * sx + jx;
+        const Y = oy + y * sy + jy;
+
+        g.globalAlpha = a;
+        g.drawImage(spr, X - r, Y - r, r*2, r*2);
       }
     }
-    g.globalCompositeOperation = prevOp;
+    g.globalAlpha = 1;
+    g.globalCompositeOperation = oldComp;
 
     tFrame++;
     requestAnimationFrame(loop);
@@ -135,7 +168,7 @@
       await v.play();
       running = true; loop();
     } catch (e) {
-      gate.style.display = 'grid'; // click-to-start fallback
+      gate.style.display = 'grid';
       console.warn('Camera start failed:', e);
     }
   }
