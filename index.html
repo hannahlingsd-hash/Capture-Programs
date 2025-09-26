@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Ghostly Point Cloud — Webcam</title>
+<title>Ghostly Point Cloud — High Contrast</title>
 <style>
   html,body{height:100%;margin:0;background:#000;overflow:hidden}
   #out{position:fixed;inset:0;display:block;width:100vw;height:100vh}
@@ -21,135 +21,136 @@
 (function(){
   const v = document.getElementById('v');
   const cnv = document.getElementById('out');
-  const g = cnv.getContext('2d', { willReadFrequently:true });
-  const gate = document.getElementById('gate');
+  const g   = cnv.getContext('2d', { willReadFrequently:true });
+  const gate= document.getElementById('gate');
 
-  /* ---------- Ghostly knobs (fast in TD) ---------- */
-  const MAX_SAMPLE_W = 520;     // 400–600 = detail/speed tradeoff
-  const GRID = 3;               // 3=very dense, 4=faster
-  const MAX_R = 1.6;            // soft-dot radius max
-  const BASE_A = 0.025;         // base alpha
-  const SCALE_A = 0.24;         // alpha gain with brightness
-  const JITTER = 0.55;          // in-cell jitter to break the grid
-  const TRAIL = 0.06;           // canvas fade per frame (lower = longer ghost)
-  const CONTRAST = 1.12;        // gentle contrast
-  const GAMMA = 0.90;           // <1 lifts shadows (keeps background)
-  const BRIGHT = 0;             // offset
-  const DIFF_T = 0.10;          // dissolve sensitivity on motion (0..1)
-  const VOID_DECAY = 0.94;      // how fast motion "holes" heal (0.90..0.98)
-  const GREEN = [0,255,120];    // matrix green
-  const CAP_DPR = 1;            // keep 1 for TouchDesigner
-  /* ------------------------------------------------ */
+  /* ---------- knobs (brighter, more contrast) ---------- */
+  const MAX_SAMPLE_W = 520;   // 400–600 = detail/speed tradeoff
+  const GRID   = 3;           // 3 = dense; 4 = faster
+  const MAX_R  = 1.7;         // soft-dot radius
+  const JITTER = 0.55;        // break grid feel
+  const TRAIL  = 0.07;        // canvas fade per frame (lower = longer ghost)
+  const CONTRAST = 1.30;      // stronger contrast
+  const GAMMA    = 0.80;      // lift shadows
+  const BRIGHT   = 12;        // slight overall lift (0–30)
+  const BASE_A   = 0.04;      // base alpha ↑ (brighter baseline)
+  const SCALE_A  = 0.36;      // alpha gain with brightness ↑
+  const EDGE_GAIN = 0.85;     // extra alpha from edges (0..1.2)
+  const HIGHLIGHT_TH = 0.62;  // where highlight boost kicks in (0..1)
+  const HIGHLIGHT_GAIN = 0.8; // extra alpha for highlights
+  const DIFF_T = 0.10;        // motion sensitivity for void mask (0..1)
+  const VOID_DECAY = 0.95;    // motion “holes” heal rate (0.90..0.98)
+  const GREEN = [0,255,120];
+  const CAP_DPR = 1;          // keep 1 for TouchDesigner
+  /* ----------------------------------------------------- */
 
   let running = false;
 
-  // prebuilt soft “splat” sprite (green radial gradient)
+  // soft “splat” sprite
   const spr = document.createElement('canvas');
   spr.width = spr.height = 32;
   const sg = spr.getContext('2d');
   const gr = sg.createRadialGradient(16,16,0,16,16,16);
-  gr.addColorStop(0, `rgba(${GREEN[0]},${GREEN[1]},${GREEN[2]},1)`);
-  gr.addColorStop(1, `rgba(${GREEN[0]},${GREEN[1]},${GREEN[2]},0)`);
+  // slightly brighter core
+  gr.addColorStop(0.0, `rgba(${GREEN[0]},${GREEN[1]},${GREEN[2]},1)`);
+  gr.addColorStop(0.45,`rgba(${GREEN[0]},${GREEN[1]},${GREEN[2]},0.75)`);
+  gr.addColorStop(1.0, `rgba(${GREEN[0]},${GREEN[1]},${GREEN[2]},0)`);
   sg.fillStyle = gr; sg.fillRect(0,0,32,32);
 
   function luma(r,g,b){ return 0.2126*r + 0.7152*g + 0.0722*b; }
 
-  function resize() {
-    const dpr = Math.min(CAP_DPR, window.devicePixelRatio || 1);
-    const w = Math.max(1, Math.floor(innerWidth  * dpr));
-    const h = Math.max(1, Math.floor(innerHeight * dpr));
-    cnv.width = w; cnv.height = h;
-    cnv.style.width = innerWidth + 'px';
-    cnv.style.height = innerHeight + 'px';
+  function resize(){
+    const dpr = Math.min(CAP_DPR, window.devicePixelRatio||1);
+    const w = Math.max(1, Math.floor(innerWidth*dpr));
+    const h = Math.max(1, Math.floor(innerHeight*dpr));
+    cnv.width=w; cnv.height=h;
+    cnv.style.width=innerWidth+'px';
+    cnv.style.height=innerHeight+'px';
     g.setTransform(dpr,0,0,dpr,0,0);
-    g.imageSmoothingEnabled = true; // soft splats
+    g.imageSmoothingEnabled = true;
   }
   resize(); addEventListener('resize', resize);
 
-  // downscale buffer for sampling
+  // buffers
   const buf = document.createElement('canvas');
   const gb  = buf.getContext('2d', { willReadFrequently:true });
 
-  // per-sample history arrays (on the GRID lattice)
-  let prevL = null;     // previous luminance per lattice cell [0..1]
-  let voidMask = null;  // motion “hole” amount per lattice cell [0..1]
-  let nx = 0, ny = 0;   // lattice dims
-
-  // deterministic micro-jitter to avoid shimmering
+  let prevL = null, voidMask = null, nx=0, ny=0;
   let tFrame = 0;
+
   function jhash(x,y){
     const s = Math.sin((x*374761393 ^ y*668265263) + tFrame*0.618) * 43758.5453;
-    return (s - Math.floor(s)) - 0.5; // [-0.5,0.5]
+    return (s - Math.floor(s)) - 0.5;
   }
 
-  function loop() {
-    if (!running) return;
+  function loop(){
+    if(!running) return;
 
-    // canvas ghosting
     g.fillStyle = `rgba(0,0,0,${TRAIL})`;
     g.fillRect(0,0,cnv.width,cnv.height);
 
-    const vw = v.videoWidth || 640, vh = v.videoHeight || 480;
+    const vw=v.videoWidth||640, vh=v.videoHeight||480;
+    const cover = Math.max(cnv.width/vw, cnv.height/vh);
+    const drawW = Math.min(MAX_SAMPLE_W, Math.ceil(vw*cover));
+    const drawH = Math.ceil(drawW*(vh/vw));
+    buf.width=drawW; buf.height=drawH;
+    gb.drawImage(v,0,0,drawW,drawH);
+    const S = gb.getImageData(0,0,drawW,drawH).data;
 
-    // draw into downscaled buffer
-    const coverScale = Math.max(cnv.width / vw, cnv.height / vh);
-    const drawW = Math.min(MAX_SAMPLE_W, Math.ceil(vw * coverScale));
-    const drawH = Math.ceil(drawW * (vh / vw));
-    buf.width = drawW; buf.height = drawH;
-    gb.drawImage(v, 0, 0, drawW, drawH);
-    const img = gb.getImageData(0, 0, drawW, drawH).data;
-
-    // grid lattice dims + buffers
     const gx = Math.floor(drawW/GRID), gy = Math.floor(drawH/GRID);
-    if (gx !== nx || gy !== ny || !prevL) {
-      nx = gx; ny = gy;
+    if (gx!==nx || gy!==ny || !prevL){
+      nx=gx; ny=gy;
       prevL = new Float32Array(nx*ny);
       voidMask = new Float32Array(nx*ny);
       prevL.fill(0); voidMask.fill(0);
     }
 
-    // map grid to display
-    const dispW = vw * coverScale, dispH = vh * coverScale;
-    const ox = (cnv.width - dispW)/2, oy = (cnv.height - dispH)/2;
-    const sx = dispW / drawW, sy = dispH / drawH;
+    const dispW=vw*cover, dispH=vh*cover;
+    const ox=(cnv.width-dispW)/2, oy=(cnv.height-dispH)/2;
+    const sx=dispW/drawW, sy=dispH/drawH;
 
-    // additive glow for soft layering
     const oldComp = g.globalCompositeOperation;
     g.globalCompositeOperation = 'lighter';
 
-    let j = 0;
-    for (let gy_i = 0; gy_i < ny; gy_i++) {
-      const y = gy_i * GRID;
-      for (let gx_i = 0; gx_i < nx; gx_i++, j++) {
-        const x = gx_i * GRID;
-        const i = ((y * drawW) + x) * 4;
+    let j=0;
+    for(let cy=0; cy<ny; cy++){
+      const y = cy*GRID;
+      const y1 = Math.min(drawH-1, y+1);
+      for(let cx=0; cx<nx; cx++, j++){
+        const x = cx*GRID;
+        const x1 = Math.min(drawW-1, x+1);
+        const i  = ((y * drawW) + x) * 4;
 
-        // tone-mapped luminance → 0..1
-        let L = luma(img[i], img[i+1], img[i+2]); // 0..255
-        L = ((L-128)*CONTRAST + 128) + BRIGHT;    // contrast + offset
-        L = Math.min(255, Math.max(0, L)) / 255;
-        L = Math.pow(L, GAMMA);
+        // luminance with stronger tone curve
+        let L = ((luma(S[i],S[i+1],S[i+2]) - 128) * CONTRAST + 128) + BRIGHT; // 0..255-ish
+        L = Math.min(255, Math.max(0, L))/255;                // 0..1
+        L = Math.pow(L, GAMMA);                               // gamma lift
+        // edge magnitude (cheap Sobel-ish: forward diffs)
+        const iX = ((y * drawW) + x1) * 4;
+        const iY = ((y1* drawW) + x ) * 4;
+        const Lx = Math.abs(luma(S[iX],S[iX+1],S[iX+2]) - luma(S[i],S[i+1],S[i+2]))/255;
+        const Ly = Math.abs(luma(S[iY],S[iY+1],S[iY+2]) - luma(S[i],S[i+1],S[i+2]))/255;
+        const edge = Math.min(1, (Lx+Ly)*1.2);
 
-        // motion → increase local "void" (points dissolve), then heal over time
-        const diff = Math.abs(L - prevL[j]);      // 0..1
+        // motion → increase local void (fades points), then heal
+        const dl = Math.abs(L - prevL[j]);
         prevL[j] = L;
-        if (diff > DIFF_T) voidMask[j] = 1;
+        if (dl > DIFF_T) voidMask[j] = 1;
         else voidMask[j] *= VOID_DECAY;
 
-        // opacity/size from brightness, attenuated by void
-        const a = (BASE_A + L * SCALE_A) * (1 - voidMask[j]);
-        if (a <= 0.002) continue;
+        // alpha: brighter for highlights + edges, attenuated by motion void
+        const highlightBoost = (L > HIGHLIGHT_TH) ? (1 + HIGHLIGHT_GAIN*(L - HIGHLIGHT_TH)/(1 - HIGHLIGHT_TH)) : 1;
+        let alpha = (BASE_A + L * SCALE_A) * (1 + EDGE_GAIN*edge) * highlightBoost * (1 - voidMask[j]);
+        if (alpha < 0.002) continue;
+        if (alpha > 1) alpha = 1;
 
-        const r = 0.25 + L * MAX_R;
+        const r = 0.3 + L * MAX_R;
 
-        // micro-jitter inside cell to break the matrix look
-        const jx = jhash(gx_i, gy_i) * GRID * JITTER * sx;
-        const jy = jhash(gy_i, gx_i) * GRID * JITTER * sy;
+        const jx = jhash(cx,cy) * GRID * JITTER * sx;
+        const jy = jhash(cy,cx) * GRID * JITTER * sy;
 
-        const X = ox + x * sx + jx;
-        const Y = oy + y * sy + jy;
-
-        g.globalAlpha = a;
+        const X = ox + x*sx + jx, Y = oy + y*sy + jy;
+        g.globalAlpha = alpha;
         g.drawImage(spr, X - r, Y - r, r*2, r*2);
       }
     }
@@ -160,21 +161,20 @@
     requestAnimationFrame(loop);
   }
 
-  async function startCam() {
+  async function startCam(){
     if (running) return;
-    try {
+    try{
       const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user' }, audio:false });
-      v.srcObject = stream;
-      await v.play();
+      v.srcObject = stream; await v.play();
       running = true; loop();
-    } catch (e) {
-      gate.style.display = 'grid';
+    }catch(e){
+      gate.style.display='grid';
       console.warn('Camera start failed:', e);
     }
   }
 
   window.addEventListener('load', startCam);
-  gate.addEventListener('click', async () => { gate.style.display='none'; await startCam(); });
+  gate.addEventListener('click', async ()=>{ gate.style.display='none'; await startCam(); });
 })();
 </script>
 </body>
