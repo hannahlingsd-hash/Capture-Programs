@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Edge Dissolution Particles — Fast 2D</title>
+<title>Edge Dots — Clean Dissolve</title>
 <style>
   html,body{height:100%;margin:0;background:#000;overflow:hidden}
   #out{position:fixed;inset:0;display:block;width:100vw;height:100vh}
   #v{display:none}
   #gate{position:fixed;inset:0;display:none;place-items:center;background:#000a;color:#0f8;font:16px system-ui}
   #gate .box{border:1px solid #0f8;padding:16px 20px;border-radius:10px}
-  #hud{position:fixed;left:12px;bottom:12px;color:#9ef;background:#0008;padding:10px 12px;border:1px solid #395;border-radius:10px;font:12px ui-monospace,system-ui}
+  #hud{position:fixed;left:12px;bottom:12px;color:#9ef;background:#0008;padding:8px 10px;border:1px solid #395;border-radius:10px;font:12px ui-monospace,system-ui}
   #hud b{color:#cfe}
 </style>
 </head>
@@ -28,58 +28,48 @@
   const gate = document.getElementById('gate');
   const hud  = document.getElementById('hud');
 
-  /* -------- tunables -------- */
-  const MAX_SAMPLE_W = 720;     // analysis width
-  let   GRID = 3;               // analysis step (smaller = more edge sites)
-  let   DOT  = 1.2;             // dot size in display px (can go <1)
-  const TRAIL = 0.12;           // frame fade 0..1
-  const TINT = [160,255,210];   // dot color (mint)
-  const EDGE_T = 52;            // Sobel threshold (lower = more spawn)
-  const CAP_DPR = 1;            // cap DPR for speed
-  const MAX_PARTICLES = 120000; // pool size (safe on modern laptops)
-  let   SPAWN_MULT = 0.9;       // particles per strong edge sample
-  let   autoThrottle = true;
-  /* -------------------------- */
+  /* ---------- minimal + fast knobs ---------- */
+  const MAX_SAMPLE_W = 720;   // analysis width (downscaled)
+  let   GRID = 3;             // edge sampling step (↓ = more dots)
+  let   DOT  = 1.0;           // dot size (display px; supports <1)
+  const EDGE_T = 55;          // Sobel magnitude threshold
+  const FADE  = 0.035;        // life decay per frame (0.03–0.06 = short)
+  const TRAIL = 0.35;         // frame fade to black (higher = less smear)
+  const TINT  = [160,255,210]; // mint
+  const CAP_DPR = 1;          // cap DPR for speed
+  const MAX_PARTICLES = 80000; // pool size (kept modest)
+  let   SPAWN_MULT = 1.0;     // spawn intensity
+  /* ----------------------------------------- */
 
-  // particle pool
+  // particle pool (no noise, tiny one-shot drift)
   const px = new Float32Array(MAX_PARTICLES);
   const py = new Float32Array(MAX_PARTICLES);
   const vx = new Float32Array(MAX_PARTICLES);
   const vy = new Float32Array(MAX_PARTICLES);
-  const life = new Float32Array(MAX_PARTICLES);  // remaining 0..1
+  const life = new Float32Array(MAX_PARTICLES);
   const size = new Float32Array(MAX_PARTICLES);
-  let head = 0; // next slot
+  let head = 0;
 
-  function allocParticle(x,y,dx,dy,mag){
-    // overwrite in a ring buffer — no GC
+  function spawn(x,y,dx,dy,mag){
     const i = head; head = (head+1) % MAX_PARTICLES;
-    px[i] = x; py[i] = y;
-    // push along gradient + a little random burst
-    const spd = 0.2 + Math.min(1, mag/150) * 1.4;
-    const ang = Math.atan2(dy, dx) + (Math.random()-0.5)*0.6;
-    vx[i] = Math.cos(ang) * spd;
-    vy[i] = Math.sin(ang) * spd;
-    life[i] = 1.0;
-    size[i] = DOT * (0.8 + Math.random()*0.6); // tiny variation
+    px[i]=x; py[i]=y;
+    // small push along outward normal, then quickly damped
+    const nrm = Math.atan2(dy, dx);
+    const spd = Math.min(1.0, mag/200) * 0.6; // tiny nudge
+    vx[i]=Math.cos(nrm)*spd;
+    vy[i]=Math.sin(nrm)*spd;
+    life[i]=1.0;
+    size[i]=DOT * (0.85 + Math.random()*0.3);
   }
 
-  // tiny curl-ish noise (cheap, deterministic)
-  function curl(nx, ny, t){
-    const s = Math.sin, c = Math.cos;
-    const n = 0.0009; // spatial freq
-    const u = nx*n + 0.0007*t, v = ny*n - 0.0005*t;
-    // 2D rotational field
-    return [ c(u)*s(v), -s(u)*c(v) ];
-  }
-
-  // canvas sizing with capped DPR
+  // sizing with capped DPR
   function resize(){
     const dpr = Math.min(CAP_DPR, window.devicePixelRatio||1);
     const w = Math.max(1, Math.floor(innerWidth*dpr));
     const h = Math.max(1, Math.floor(innerHeight*dpr));
-    cnv.width = w; cnv.height = h;
-    cnv.style.width = innerWidth+'px';
-    cnv.style.height = innerHeight+'px';
+    cnv.width=w; cnv.height=h;
+    cnv.style.width=innerWidth+'px';
+    cnv.style.height=innerHeight+'px';
     g.setTransform(dpr,0,0,dpr,0,0);
   }
   resize(); addEventListener('resize', resize);
@@ -90,32 +80,36 @@
 
   function luma(r,g,b){ return 0.2126*r + 0.7152*g + 0.0722*b; }
 
-  let fps=60, last=performance.now(), showHUD=true;
+  // reuse luma array when size stable
+  let Y=null, yW=0, yH=0;
 
+  let fps=60, last=performance.now(), showHUD=true;
   function drawHUD(){
     if(!showHUD){ hud.style.display='none'; return; }
     hud.style.display='block';
     hud.innerHTML =
-      `<b>Dissolution Particles</b> • ${fps.toFixed(0)} fps<br>
-       GRID ${GRID}px • DOT ${DOT.toFixed(2)}px • Spawn ${SPAWN_MULT.toFixed(2)} • ${autoThrottle?'Auto':'Manual'}<br>
-       [ / ] grid • - / = dot • ; / ' spawn • F auto • C clear • H HUD`;
+      `<b>Edge Dots — Clean Dissolve</b> • ${fps.toFixed(0)} fps<br>
+       GRID ${GRID}px • DOT ${DOT.toFixed(2)}px • Spawn ${SPAWN_MULT.toFixed(2)}<br>
+       [ / ] grid • - / = dot • ; / ' spawn • C clear • H HUD`;
   }
 
   function loop(){
     const now = performance.now();
-    const dt = Math.min(50, now - last); last = now; // clamp
+    const dt = Math.min(50, now - last); last = now;
     fps = 1000 / Math.max(1, dt);
 
-    // trail/fade
+    // quick fade to black (short trails)
     g.fillStyle = `rgba(0,0,0,${TRAIL})`;
     g.fillRect(0,0,cnv.width,cnv.height);
 
     const vw = v.videoWidth||640, vh = v.videoHeight||480;
 
-    // cover scale; sample downscaled frame
+    // cover scaling; sample downscaled frame
     const coverScale = Math.max(cnv.width/vw, cnv.height/vh);
     const drawW = Math.min(MAX_SAMPLE_W, Math.ceil(vw*coverScale));
     const drawH = Math.ceil(drawW * (vh/vw));
+    if (yW!==drawW || yH!==drawH){ Y = new Float32Array(drawW*drawH); yW=drawW; yH=drawH; }
+
     buf.width = drawW; buf.height = drawH;
     gb.drawImage(v, 0, 0, drawW, drawH);
     const img = gb.getImageData(0,0,drawW,drawH).data;
@@ -124,31 +118,24 @@
     const ox = (cnv.width - dispW)/2, oy = (cnv.height - dispH)/2;
     const sx = dispW/drawW, sy = dispH/drawH;
 
-    // build luma
-    const Y = new Float32Array(drawW*drawH);
+    // luma
     for (let y=0,i=0,p=0; y<drawH; y++){
       for (let x=0; x<drawW; x++,i++,p+=4){
         Y[i] = luma(img[p],img[p+1],img[p+2]);
       }
     }
 
-    // Sobel edge pass + spawn
+    // Sobel (edge → minimal spawn)
     const Gx = [-1,0,1,-2,0,2,-1,0,1];
     const Gy = [-1,-2,-1,0,0,0,1,2,1];
 
-    // throttle spawn to maintain fps
-    if (autoThrottle){
-      if (fps < 50)      SPAWN_MULT = Math.max(0.3, SPAWN_MULT*0.9);
-      else if (fps > 58) SPAWN_MULT = Math.min(2.0, SPAWN_MULT*1.03);
-    }
-
-    const maxSpawnThisFrame = 12000 * SPAWN_MULT; // safety cap
-    let spawned = 0;
+    // cap spawns per frame to avoid spikes
+    let budget = 20000; // hard upper limit per frame
 
     for (let y=1; y<drawH-1; y+=GRID){
       const row = y*drawW;
       for (let x=1; x<drawW-1; x+=GRID){
-        // Sobel 3x3
+        // 3x3 Sobel
         let sxv=0, syv=0, k=0;
         for (let j=-1;j<=1;j++){
           const r = row + j*drawW;
@@ -160,53 +147,39 @@
         const mag = Math.hypot(sxv, syv);
         if (mag < EDGE_T) continue;
 
-        // spawn proportional to edge strength
-        let n = (mag-EDGE_T) * 0.015 * SPAWN_MULT; // ~0..2
-        n = n>2?2:n;
-        for (let s=0; s<n && spawned < maxSpawnThisFrame; s++){
-          const cx = ox + x*sx + (Math.random()-0.5)*sx*GRID*0.4;
-          const cy = oy + y*sy + (Math.random()-0.5)*sy*GRID*0.4;
-          allocParticle(cx, cy, sxv, syv, mag);
-          spawned++;
+        // probabilistic spawn to hold density without flooding
+        let n = (mag-EDGE_T)*0.01*SPAWN_MULT; // ~0..1
+        if (n>1) n=1;
+        if (Math.random() < n && budget>0){
+          const cx = ox + x*sx + (Math.random()-0.5)*sx*GRID*0.2;
+          const cy = oy + y*sy + (Math.random()-0.5)*sy*GRID*0.2;
+          spawn(cx, cy, sxv, syv, mag);
+          budget--;
         }
       }
     }
 
-    // update & draw particles (micro-dots)
-    g.globalCompositeOperation = 'lighter';
+    // update & draw dots (no glow, source-over)
     g.fillStyle = `rgba(${TINT[0]},${TINT[1]},${TINT[2]},1)`;
-    const alphaBase = 0.18; // base dot alpha
-    const damper = 0.985;   // velocity damping per frame
-    const t = now * 0.0015;
-
+    g.globalCompositeOperation = 'source-over';
     for (let i=0; i<MAX_PARTICLES; i++){
-      let L = life[i];
-      if (L <= 0) continue;
-
-      // curl field + slight outward drift
-      const c = curl(px[i], py[i], t);
-      vx[i] += c[0]*0.08;
-      vy[i] += c[1]*0.08;
-
-      // integrate
+      if (life[i] <= 0) continue;
+      // minimal movement: brief nudge then stop
       px[i] += vx[i];
       py[i] += vy[i];
-      vx[i] *= damper; vy[i] *= damper;
+      vx[i] *= 0.85; vy[i] *= 0.85; // quickly damp to zero
 
-      // fade & shrink
-      L -= 0.012 + Math.random()*0.01; // life step
-      life[i] = L;
-      if (L <= 0) continue;
+      // fade out
+      life[i] -= FADE;
+      if (life[i] <= 0){ life[i]=0; continue; }
 
-      // draw tiny square (sub-pixel impression with alpha)
-      const a = alphaBase * L;
-      if (a < 0.01) { life[i]=0; continue; }
+      const a = 0.22 * life[i];
+      if (a < 0.01){ life[i]=0; continue; }
       g.globalAlpha = a;
-      const s = size[i] * (0.6 + 0.4*L);
+      const s = size[i] * (0.7 + 0.3*life[i]);
       g.fillRect(px[i], py[i], s, s);
     }
     g.globalAlpha = 1;
-    g.globalCompositeOperation = 'source-over';
 
     drawHUD();
     requestAnimationFrame(loop);
@@ -225,13 +198,12 @@
 
   // controls
   addEventListener('keydown', (e)=>{
-    if (e.key==='[') GRID = Math.min(10, GRID+1);
+    if (e.key==='[') GRID = Math.min(12, GRID+1);
     else if (e.key===']') GRID = Math.max(2, GRID-1);
     else if (e.key==='-') DOT = Math.max(0.5, DOT-0.1);
-    else if (e.key==='=') DOT = Math.min(2.5, DOT+0.1);
-    else if (e.key===';') SPAWN_MULT = Math.max(0.2, SPAWN_MULT*0.9);
-    else if (e.key==="'") SPAWN_MULT = Math.min(3.0, SPAWN_MULT*1.11);
-    else if (e.key==='f' || e.key==='F') autoThrottle = !autoThrottle;
+    else if (e.key==='=') DOT = Math.min(2.0, DOT+0.1);
+    else if (e.key===';') SPAWN_MULT = Math.max(0.3, SPAWN_MULT*0.9);
+    else if (e.key==="'") SPAWN_MULT = Math.min(2.5, SPAWN_MULT*1.1);
     else if (e.key==='c' || e.key==='C'){ for(let i=0;i<MAX_PARTICLES;i++) life[i]=0; }
     else if (e.key==='h' || e.key==='H') showHUD = !showHUD;
     drawHUD();
