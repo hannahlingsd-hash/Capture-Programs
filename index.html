@@ -1,11 +1,98 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="UTF-8">
-    <title>My First Webpage</title>
-  </head>
-  <body>
-    <h1>Hello, world!</h1>
-    <p>This is my first GitHub Pages site.</p>
-  </body>
-</html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Frame Difference – Minimal</title>
+<style>
+  :root { --bg:#0b0c10; --fg:#e6e6e6; --accent:#5eead4; --muted:#9aa3af; }
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,Segoe UI,Arial}
+  header{padding:14px 16px;border-bottom:1px solid #1f2937;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+  header .group{display:flex;gap:8px;align-items:center}
+  header label{color:var(--muted)}
+  input[type="range"]{width:120px}
+  button,summary{cursor:pointer}
+  button{background:#111827;border:1px solid #374151;color:var(--fg);padding:6px 10px;border-radius:8px}
+  button.primary{border-color:var(--accent);color:#042f2e}
+  a{color:var(--accent)}
+  main{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px}
+  .panel{background:#0f172a;border:1px solid #1f2937;border-radius:12px;overflow:hidden}
+  .panel h3{margin:0;padding:10px 12px;border-bottom:1px solid #1f2937;font-weight:600}
+  .panel .wrap{padding:10px;display:flex;justify-content:center;align-items:center;min-height:320px}
+  canvas{max-width:100%;height:auto;background:#000}
+  footer{padding:10px;color:var(--muted);text-align:center}
+  details{margin-left:auto}
+</style>
+</head>
+<body>
+<header>
+  <div class="group">
+    <button id="useWebcam">Use webcam</button>
+    <input id="file" type="file" accept="video/*" />
+    <button id="playPause">Play</button>
+  </div>
+  <div class="group">
+    <label>Threshold <input id="th" type="range" min="0" max="255" value="20"></label>
+    <label>Gain <input id="gain" type="range" min="1" max="10" value="3"></label>
+    <label>Blur(px) <input id="blur" type="range" min="0" max="8" value="1"></label>
+    <label>Decay <input id="decay" type="range" min="0" max="0.98" step="0.02" value="0.80"></label>
+    <label><input id="colorize" type="checkbox" checked> Colorize</label>
+  </div>
+  <details>
+    <summary>Help</summary>
+    <div style="padding-top:6px;color:#cbd5e1">
+      Upload a video or use webcam (requires HTTPS → GitHub Pages is fine). The right canvas shows
+      per-pixel absolute differences between the current and previous frame. Threshold removes noise,
+      Gain amplifies motion, Blur smooths, Decay leaves a fading trail.
+    </div>
+  </details>
+</header>
+
+<main>
+  <section class="panel">
+    <h3>Source</h3>
+    <div class="wrap"><video id="vid" playsinline muted style="max-width:100%;display:none"></video><canvas id="c1"></canvas></div>
+  </section>
+  <section class="panel">
+    <h3>Frame Difference</h3>
+    <div class="wrap"><canvas id="c2"></canvas></div>
+  </section>
+</main>
+
+<footer>
+  Frame difference is computed as <code>abs(curr - prev)</code> per channel → gray or heatmap; decay applies an exponential trail.
+</footer>
+
+<script>
+(async function () {
+  const vid = document.getElementById('vid');
+  const c1 = document.getElementById('c1'), g1 = c1.getContext('2d', { willReadFrequently: true });
+  const c2 = document.getElementById('c2'), g2 = c2.getContext('2d', { willReadFrequently: true });
+
+  const file = document.getElementById('file');
+  const useWebcamBtn = document.getElementById('useWebcam');
+  const playPause = document.getElementById('playPause');
+  const th = document.getElementById('th');
+  const gain = document.getElementById('gain');
+  const blur = document.getElementById('blur');
+  const decay = document.getElementById('decay');
+  const colorize = document.getElementById('colorize');
+
+  let prevFrame = null;              // Uint8ClampedArray
+  let running = false;
+  let trail = null;                  // Float32Array for decay accumulation
+
+  function resizeToVideo() {
+    const w = vid.videoWidth || 640, h = vid.videoHeight || 360;
+    c1.width = c2.width = w; c1.height = c2.height = h;
+    prevFrame = null;
+    trail = new Float32Array(w * h); // one float per pixel (luma)
+  }
+
+  // Map 0..255 to a simple fire-like color scale
+  function heatColor(v) {
+    // v: 0..255
+    const t = v / 255;
+    const r = Math.min(255, Math.floor(255 * t * 1.5));
+    const g = Math.floor(255 * Math.max(0, Math.min(1, (t - 0.2) * 1.25)));
+    const b = Math.floor(255 * Math.max(0, 1.2 -*
