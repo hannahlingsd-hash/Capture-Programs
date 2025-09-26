@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Edge Dots — Fast</title>
+<title>Edge Dissolution Particles — Fast 2D</title>
 <style>
   html,body{height:100%;margin:0;background:#000;overflow:hidden}
   #out{position:fixed;inset:0;display:block;width:100vw;height:100vh}
@@ -28,27 +28,58 @@
   const gate = document.getElementById('gate');
   const hud  = document.getElementById('hud');
 
-  /* -------- knobs (safe defaults) -------- */
-  const MAX_SAMPLE_W = 720;     // analysis width (higher = more detail)
-  let GRID = 3;                 // sampling step in analysis space
-  let DOT = 1.6;                // dot size in display pixels
-  const TRAIL = 0.18;           // 0..1, higher = longer trail
-  const CAP_DPR = 1;            // cap DPR for perf
-  const EDGE_T = 55;            // Sobel magnitude threshold
-  const TINT = [150,255,210];   // dot color (mint)
-  let autoThrottle = true;      // keep fps stable by nudging GRID
-  /* -------------------------------------- */
+  /* -------- tunables -------- */
+  const MAX_SAMPLE_W = 720;     // analysis width
+  let   GRID = 3;               // analysis step (smaller = more edge sites)
+  let   DOT  = 1.2;             // dot size in display px (can go <1)
+  const TRAIL = 0.12;           // frame fade 0..1
+  const TINT = [160,255,210];   // dot color (mint)
+  const EDGE_T = 52;            // Sobel threshold (lower = more spawn)
+  const CAP_DPR = 1;            // cap DPR for speed
+  const MAX_PARTICLES = 120000; // pool size (safe on modern laptops)
+  let   SPAWN_MULT = 0.9;       // particles per strong edge sample
+  let   autoThrottle = true;
+  /* -------------------------- */
 
-  let running=false, raf=null, lastTime=performance.now(), fps=0, showHUD=true;
+  // particle pool
+  const px = new Float32Array(MAX_PARTICLES);
+  const py = new Float32Array(MAX_PARTICLES);
+  const vx = new Float32Array(MAX_PARTICLES);
+  const vy = new Float32Array(MAX_PARTICLES);
+  const life = new Float32Array(MAX_PARTICLES);  // remaining 0..1
+  const size = new Float32Array(MAX_PARTICLES);
+  let head = 0; // next slot
+
+  function allocParticle(x,y,dx,dy,mag){
+    // overwrite in a ring buffer — no GC
+    const i = head; head = (head+1) % MAX_PARTICLES;
+    px[i] = x; py[i] = y;
+    // push along gradient + a little random burst
+    const spd = 0.2 + Math.min(1, mag/150) * 1.4;
+    const ang = Math.atan2(dy, dx) + (Math.random()-0.5)*0.6;
+    vx[i] = Math.cos(ang) * spd;
+    vy[i] = Math.sin(ang) * spd;
+    life[i] = 1.0;
+    size[i] = DOT * (0.8 + Math.random()*0.6); // tiny variation
+  }
+
+  // tiny curl-ish noise (cheap, deterministic)
+  function curl(nx, ny, t){
+    const s = Math.sin, c = Math.cos;
+    const n = 0.0009; // spatial freq
+    const u = nx*n + 0.0007*t, v = ny*n - 0.0005*t;
+    // 2D rotational field
+    return [ c(u)*s(v), -s(u)*c(v) ];
+  }
 
   // canvas sizing with capped DPR
   function resize(){
     const dpr = Math.min(CAP_DPR, window.devicePixelRatio||1);
     const w = Math.max(1, Math.floor(innerWidth*dpr));
     const h = Math.max(1, Math.floor(innerHeight*dpr));
-    cnv.width=w; cnv.height=h;
-    cnv.style.width=innerWidth+'px';
-    cnv.style.height=innerHeight+'px';
+    cnv.width = w; cnv.height = h;
+    cnv.style.width = innerWidth+'px';
+    cnv.style.height = innerHeight+'px';
     g.setTransform(dpr,0,0,dpr,0,0);
   }
   resize(); addEventListener('resize', resize);
@@ -59,68 +90,68 @@
 
   function luma(r,g,b){ return 0.2126*r + 0.7152*g + 0.0722*b; }
 
+  let fps=60, last=performance.now(), showHUD=true;
+
   function drawHUD(){
     if(!showHUD){ hud.style.display='none'; return; }
     hud.style.display='block';
-    hud.innerHTML = `<b>Edge Dots</b> • GRID ${GRID}px • DOT ${DOT.toFixed(1)}px • ${autoThrottle?'Auto':'Manual'} • ${fps.toFixed(0)} fps<br>
-    [ / ] grid • - / = dot size • F toggle auto • H toggle HUD`;
+    hud.innerHTML =
+      `<b>Dissolution Particles</b> • ${fps.toFixed(0)} fps<br>
+       GRID ${GRID}px • DOT ${DOT.toFixed(2)}px • Spawn ${SPAWN_MULT.toFixed(2)} • ${autoThrottle?'Auto':'Manual'}<br>
+       [ / ] grid • - / = dot • ; / ' spawn • F auto • C clear • H HUD`;
   }
 
   function loop(){
-    if(!running) return;
-
-    // fps + throttle
     const now = performance.now();
-    const dt = now - lastTime; lastTime = now;
-    fps = 1000 / dt;
-    if (autoThrottle && (now % 500 < dt)){ // every ~0.5s
-      if (fps < 50 && GRID < 6) GRID++;        // ease up
-      else if (fps > 58 && GRID > 2) GRID--;   // add detail
-    }
+    const dt = Math.min(50, now - last); last = now; // clamp
+    fps = 1000 / Math.max(1, dt);
 
-    // trail
+    // trail/fade
     g.fillStyle = `rgba(0,0,0,${TRAIL})`;
     g.fillRect(0,0,cnv.width,cnv.height);
 
     const vw = v.videoWidth||640, vh = v.videoHeight||480;
 
-    // cover scaling; sample from downscaled buffer
+    // cover scale; sample downscaled frame
     const coverScale = Math.max(cnv.width/vw, cnv.height/vh);
     const drawW = Math.min(MAX_SAMPLE_W, Math.ceil(vw*coverScale));
     const drawH = Math.ceil(drawW * (vh/vw));
     buf.width = drawW; buf.height = drawH;
-    gb.drawImage(v,0,0,drawW,drawH);
-    const img = gb.getImageData(0,0,drawW,drawH);
-    const px  = img.data;
+    gb.drawImage(v, 0, 0, drawW, drawH);
+    const img = gb.getImageData(0,0,drawW,drawH).data;
 
     const dispW = vw*coverScale, dispH = vh*coverScale;
     const ox = (cnv.width - dispW)/2, oy = (cnv.height - dispH)/2;
     const sx = dispW/drawW, sy = dispH/drawH;
 
-    // build luma array
+    // build luma
     const Y = new Float32Array(drawW*drawH);
     for (let y=0,i=0,p=0; y<drawH; y++){
       for (let x=0; x<drawW; x++,i++,p+=4){
-        Y[i] = luma(px[p],px[p+1],px[p+2]);
+        Y[i] = luma(img[p],img[p+1],img[p+2]);
       }
     }
 
-    // Sobel edge magnitude; draw tiny rects for speed
+    // Sobel edge pass + spawn
     const Gx = [-1,0,1,-2,0,2,-1,0,1];
     const Gy = [-1,-2,-1,0,0,0,1,2,1];
 
-    const col = `rgba(${TINT[0]},${TINT[1]},${TINT[2]},0.85)`;
-    g.fillStyle = col;
-    g.globalCompositeOperation = 'lighter';
+    // throttle spawn to maintain fps
+    if (autoThrottle){
+      if (fps < 50)      SPAWN_MULT = Math.max(0.3, SPAWN_MULT*0.9);
+      else if (fps > 58) SPAWN_MULT = Math.min(2.0, SPAWN_MULT*1.03);
+    }
 
-    const stepY = GRID, stepX = GRID;
-    for (let y=1; y<drawH-1; y+=stepY){
-      let row = y*drawW;
-      for (let x=1; x<drawW-1; x+=stepX){
+    const maxSpawnThisFrame = 12000 * SPAWN_MULT; // safety cap
+    let spawned = 0;
+
+    for (let y=1; y<drawH-1; y+=GRID){
+      const row = y*drawW;
+      for (let x=1; x<drawW-1; x+=GRID){
         // Sobel 3x3
         let sxv=0, syv=0, k=0;
         for (let j=-1;j<=1;j++){
-          const r = (row + j*drawW);
+          const r = row + j*drawW;
           for (let i=-1;i<=1;i++,k++){
             const val = Y[r + x + i];
             sxv += Gx[k]*val; syv += Gy[k]*val;
@@ -129,43 +160,85 @@
         const mag = Math.hypot(sxv, syv);
         if (mag < EDGE_T) continue;
 
-        // micro-dot (square) — faster than arc()
-        const cx = ox + x*sx, cy = oy + y*sy;
-        // scale opacity a bit by magnitude (optional)
-        // g.globalAlpha = 0.5 + Math.min(0.5, mag/512);
-        g.fillRect(cx, cy, DOT, DOT);
+        // spawn proportional to edge strength
+        let n = (mag-EDGE_T) * 0.015 * SPAWN_MULT; // ~0..2
+        n = n>2?2:n;
+        for (let s=0; s<n && spawned < maxSpawnThisFrame; s++){
+          const cx = ox + x*sx + (Math.random()-0.5)*sx*GRID*0.4;
+          const cy = oy + y*sy + (Math.random()-0.5)*sy*GRID*0.4;
+          allocParticle(cx, cy, sxv, syv, mag);
+          spawned++;
+        }
       }
     }
+
+    // update & draw particles (micro-dots)
+    g.globalCompositeOperation = 'lighter';
+    g.fillStyle = `rgba(${TINT[0]},${TINT[1]},${TINT[2]},1)`;
+    const alphaBase = 0.18; // base dot alpha
+    const damper = 0.985;   // velocity damping per frame
+    const t = now * 0.0015;
+
+    for (let i=0; i<MAX_PARTICLES; i++){
+      let L = life[i];
+      if (L <= 0) continue;
+
+      // curl field + slight outward drift
+      const c = curl(px[i], py[i], t);
+      vx[i] += c[0]*0.08;
+      vy[i] += c[1]*0.08;
+
+      // integrate
+      px[i] += vx[i];
+      py[i] += vy[i];
+      vx[i] *= damper; vy[i] *= damper;
+
+      // fade & shrink
+      L -= 0.012 + Math.random()*0.01; // life step
+      life[i] = L;
+      if (L <= 0) continue;
+
+      // draw tiny square (sub-pixel impression with alpha)
+      const a = alphaBase * L;
+      if (a < 0.01) { life[i]=0; continue; }
+      g.globalAlpha = a;
+      const s = size[i] * (0.6 + 0.4*L);
+      g.fillRect(px[i], py[i], s, s);
+    }
+    g.globalAlpha = 1;
     g.globalCompositeOperation = 'source-over';
+
     drawHUD();
-    raf = requestAnimationFrame(loop);
+    requestAnimationFrame(loop);
   }
 
   async function startCam(){
-    if (running) return;
     try{
       const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user' }, audio:false });
       v.srcObject = stream; await v.play();
-      running = true; loop();
+      loop();
     }catch(e){
       gate.style.display='grid';
       console.warn('Camera start failed:', e);
     }
   }
 
-  window.addEventListener('load', startCam);
-  gate.addEventListener('click', async ()=>{ gate.style.display='none'; await startCam(); });
-
   // controls
   addEventListener('keydown', (e)=>{
-    if (e.key==='[') GRID = Math.min(12, GRID+1);
+    if (e.key==='[') GRID = Math.min(10, GRID+1);
     else if (e.key===']') GRID = Math.max(2, GRID-1);
-    else if (e.key==='-') DOT = Math.max(0.8, DOT-0.2);
-    else if (e.key==='=') DOT = Math.min(3.0, DOT+0.2);
+    else if (e.key==='-') DOT = Math.max(0.5, DOT-0.1);
+    else if (e.key==='=') DOT = Math.min(2.5, DOT+0.1);
+    else if (e.key===';') SPAWN_MULT = Math.max(0.2, SPAWN_MULT*0.9);
+    else if (e.key==="'") SPAWN_MULT = Math.min(3.0, SPAWN_MULT*1.11);
     else if (e.key==='f' || e.key==='F') autoThrottle = !autoThrottle;
+    else if (e.key==='c' || e.key==='C'){ for(let i=0;i<MAX_PARTICLES;i++) life[i]=0; }
     else if (e.key==='h' || e.key==='H') showHUD = !showHUD;
     drawHUD();
   });
+
+  window.addEventListener('load', startCam);
+  gate.addEventListener('click', async ()=>{ gate.style.display='none'; await startCam(); });
 
   drawHUD();
 })();
