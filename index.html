@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Edge Dissolve — Motion-Contour Boost</title>
+<title>Edge Dissolve + Luma Underpaint</title>
 <style>
   html,body{height:100%;margin:0;background:#000;overflow:hidden}
   #out{position:fixed;inset:0;display:block;width:100vw;height:100vh}
@@ -28,32 +28,34 @@
   const hud = document.getElementById('hud');
   const gate = document.getElementById('gate');
 
-  /* ---------------- tuned knobs ---------------- */
+  /* ---------------- core knobs ---------------- */
   const MAX_SAMPLE_W = 720;
-  let   GRID = 3;                 // sampling step (↓ = more detail)
-  let   DOT  = 1.1;               // base dot size
-  const EDGE_T = 46;              // Sobel threshold (lower = more edges)
-  const CONTRAST_EXP = 1.2;       // edge contrast curve
-  const TRAIL  = 0.30;            // frame fade (higher = shorter trails)
-  let   LIFE_STEP = 0.040;        // particle fade speed
-  const V_DAMP = 0.92;            // particle damping
-  let   ADD_GAIN = 0.34;          // additive alpha (brightness)
+  let   GRID = 3;                 // edge sampling step
+  let   DOT  = 1.1;               // particle dot size
+  const EDGE_T = 46;
+  const CONTRAST_EXP = 1.2;
+  const TRAIL  = 0.30;            // frame fade
+  let   LIFE_STEP = 0.040;
+  const V_DAMP = 0.92;
+  let   ADD_GAIN = 0.34;          // particle brightness
   const TINT = [160,255,210];
   const CAP_DPR = 1;
 
-  // Motion routing
-  let MOTION_BIAS_ON = true;      // spawn more where moving
-  let MOTION_GAIN = 3.2;          // << use G/H to adjust live
-  const MOTION_DECAY = 0.88;      // motion EMA
-  // Motion sustain (keeps you visible while moving)
-  let  SUSTAIN_ON = true;
-  let  SUSTAIN_GAIN = 0.030;
+  // Motion, sustain, contour
+  let MOTION_BIAS_ON = true, MOTION_GAIN = 3.2, MOTION_DECAY = 0.88;
+  let SUSTAIN_ON = true, SUSTAIN_GAIN = 0.030;
+  let EDGE_THICKNESS = 2;         // 1..3
+  /* ------------------------------------------- */
 
-  // Contour reinforcement
-  let EDGE_THICKNESS = 2;         // 1..3 micro-dots along ±n̂
-  /* -------------------------------------------- */
+  /* ---------- Luma underpaint (new) ---------- */
+  let UNDERPAINT_ON = true;
+  let UP_GAIN = 0.40;             // additive highlight mix (0..1)
+  let SH_GAIN = 0.20;             // shadow multiply mix (0..1)
+  const UP_GRID = 2;              // micro-dot step in analysis space (small = denser)
+  const UP_GAMMA = 1.15;          // luma curve; >1 = more contrast
+  /* ------------------------------------------- */
 
-  // particles (pooled)
+  // pooled particles
   const MAX_PARTICLES = 90000;
   const px=new Float32Array(MAX_PARTICLES), py=new Float32Array(MAX_PARTICLES);
   const vx=new Float32Array(MAX_PARTICLES), vy=new Float32Array(MAX_PARTICLES);
@@ -69,7 +71,7 @@
     size[i]=DOT*(0.85+Math.random()*0.35);
   }
 
-  // low-res flow field (light motion, cheap)
+  // low-res flow field
   let FW=0,FH=0,fieldX=null,fieldY=null,fieldNext=0;
   function ensureField(w,h){
     const cell = 36;
@@ -124,9 +126,10 @@
   function drawHUD(){
     if(!showHUD){ hud.style.display='none'; return; }
     hud.style.display='block';
-    hud.innerHTML = `<b>Motion-Contour Boost</b> • ${fps.toFixed(0)} fps<br>
-    GRID ${GRID}px • DOT ${DOT.toFixed(2)}px • Spawn ${SPAWN_MULT.toFixed(2)} • Bright ${ADD_GAIN.toFixed(2)} • MotGain ${MOTION_GAIN.toFixed(2)} • EdgeThick ${EDGE_THICKNESS}<br>
-    [ / ] grid • - / = dot • ; / ' spawn • B/N brightness • M motion bias • S sustain • , / . sustain −/+ • G/H motion gain −/+ • T thickness • F auto • C clear • H HUD`;
+    hud.innerHTML = `<b>Edge + Underpaint</b> • ${fps.toFixed(0)} fps<br>
+    GRID ${GRID}px • DOT ${DOT.toFixed(2)} • Spawn ${SPAWN_MULT.toFixed(2)} • Bright ${ADD_GAIN.toFixed(2)} • MotGain ${MOTION_GAIN.toFixed(2)} • EdgeThick ${EDGE_THICKNESS}<br>
+    Underpaint ${UNDERPAINT_ON?'ON':'OFF'} (U/J ${UP_GAIN.toFixed(2)}) • Shadow ${SH_GAIN.toFixed(2)} • SUSTAIN ${SUSTAIN_ON?'ON':'OFF'} (${SUSTAIN_GAIN.toFixed(3)}) • ${autoT?'Auto':'Manual'}<br>
+    [/]=grid  -/==dot  ;/'=spawn  B/N=brightness  Y/H=shadow±  K=underpaint  S=toggle sustain ,/.=sustain±  G/H=motion gain±  T=thickness  F=auto  C=clear  Shift+H=HUD`;
   }
 
   function loop(){
@@ -168,14 +171,14 @@
     }
     prevY = Y;
 
-    // spawn budget (FPS-aware)
+    // FPS-aware budget
     let budget = 17000;
     if (autoT){
       if (fps<48) budget*=0.7;
       else if (fps>56) budget*=1.15;
     }
 
-    // Sobel edges with motion-edge boost
+    // Sobel edges with motion boost
     const Gx=[-1,0,1,-2,0,2,-1,0,1], Gy=[-1,-2,-1,0,0,0,1,2,1];
     for(let y=1;y<drawH-1;y+=GRID){
       const row=y*drawW;
@@ -194,10 +197,10 @@
         // contrast curve
         mag = Math.pow((mag-EDGE_T)/255, CONTRAST_EXP)*255;
 
-        // motion-edge boost (foreground pop)
+        // motion-edge boost
         let boost = 1;
         if (MOTION_BIAS_ON){
-          const mot = motionEMA[row+x]/128;         // normalize
+          const mot = motionEMA[row+x]/128;
           boost += MOTION_GAIN*Math.min(1, mot);
         }
         const len = Math.max(1e-6, Math.hypot(sxv,syv));
@@ -213,18 +216,17 @@
             nx, ny, mag*boost
           );
 
-          // **contour reinforcement**: stamp along ±n̂
+          // contour reinforcement along ±n̂
           if (boost>1.2 && EDGE_THICKNESS>1){
-            const step = Math.max(sx, sy)*0.6; // small offset
+            const step = Math.max(sx, sy)*0.6;
+            g.globalCompositeOperation='lighter';
+            g.fillStyle=`rgba(${TINT[0]},${TINT[1]},${TINT[2]},${ADD_GAIN*0.55})`;
             for (let t=1; t<EDGE_THICKNESS; t++){
               const off = step*t;
-              // brighter, immediate dots (no particles) for crisp outline
-              g.globalCompositeOperation='lighter';
-              g.fillStyle=`rgba(${TINT[0]},${TINT[1]},${TINT[2]},${ADD_GAIN*0.55})`;
               g.fillRect(cx + nx*off, cy + ny*off, DOT, DOT);
               g.fillRect(cx - nx*off, cy - ny*off, DOT, DOT);
-              g.globalCompositeOperation='source-over';
             }
+            g.globalCompositeOperation='source-over';
           }
         }
         if (budget<=0) break;
@@ -232,18 +234,56 @@
       if (budget<=0) break;
     }
 
-    // draw particles
+    /* --------- Luma underpaint (highlights & shadows) --------- */
+    if (UNDERPAINT_ON){
+      const inv255 = 1/255;
+      const step = Math.max(1, UP_GRID); // analysis grid step
+      // Highlights (additive)
+      g.globalCompositeOperation='lighter';
+      g.fillStyle=`rgba(${TINT[0]},${TINT[1]},${TINT[2]},${UP_GAIN})`;
+      for (let y=0; y<drawH; y+=step){
+        const row = y*drawW;
+        for (let x=0; x<drawW; x+=step){
+          let L = Y[row+x]*inv255;
+          L = Math.pow(L, UP_GAMMA);
+          if (L < 0.25) continue; // keep it light
+          const a = (L-0.25)*1.333*UP_GAIN; // remap 0.25..1 → 0..1
+          if (a<=0) continue;
+          g.globalAlpha = a;
+          g.fillRect(ox + x*sx, oy + y*sy, DOT*0.9, DOT*0.9);
+        }
+      }
+      // Shadows (multiply) — very light to suggest volume
+      if (SH_GAIN>0.001){
+        g.globalCompositeOperation='multiply';
+        // teal-ish dark so it stays in palette
+        g.fillStyle=`rgba(24,64,54,${SH_GAIN})`;
+        for (let y=0; y<drawH; y+=step){
+          const row = y*drawW;
+          for (let x=0; x<drawW; x+=step){
+            const L = Y[row+x]*inv255;
+            const d = (0.45 - L);     // below mid-gray darkens
+            if (d <= 0) continue;
+            g.globalAlpha = Math.min(0.6, d*1.6*SH_GAIN);
+            g.fillRect(ox + x*sx, oy + y*sy, DOT, DOT);
+          }
+        }
+      }
+      g.globalAlpha=1;
+      g.globalCompositeOperation='source-over';
+    }
+    /* ----------------------------------------------------------- */
+
+    // draw particles (with sustain)
     g.globalCompositeOperation='lighter';
     g.fillStyle = `rgba(${TINT[0]},${TINT[1]},${TINT[2]},${ADD_GAIN})`;
     for(let i=0;i<MAX_PARTICLES;i++){
       if(life[i]<=0) continue;
-
       const f=sampleField(px[i],py[i]);
       vx[i]+=f[0]; vy[i]+=f[1];
       px[i]+=vx[i]; py[i]+=vy[i];
       vx[i]*=V_DAMP; vy[i]*=V_DAMP;
 
-      // motion sustain: extend life where motion persists
       if (SUSTAIN_ON){
         const mx = Math.max(0, Math.min(drawW-1, ((px[i]-ox)/sx)|0));
         const my = Math.max(0, Math.min(drawH-1, ((py[i]-oy)/sy)|0));
@@ -283,16 +323,21 @@
     else if(e.key==="'") SPAWN_MULT = Math.min(3.0, SPAWN_MULT*1.1);
     else if(e.key==='b'||e.key==='B') ADD_GAIN = Math.min(0.6, ADD_GAIN+0.02);
     else if(e.key==='n'||e.key==='N') ADD_GAIN = Math.max(0.10, ADD_GAIN-0.02);
+    else if(e.key==='g') MOTION_GAIN = Math.max(0.0, MOTION_GAIN-0.2);
+    else if(e.key==='h') MOTION_GAIN = Math.min(6.0, MOTION_GAIN+0.2);
+    else if(e.key==='t'||e.key==='T'){ EDGE_THICKNESS = EDGE_THICKNESS%3 + 1; }
     else if(e.key==='m'||e.key==='M') MOTION_BIAS_ON = !MOTION_BIAS_ON;
     else if(e.key==='s'||e.key==='S') SUSTAIN_ON = !SUSTAIN_ON;
     else if(e.key===',' ) SUSTAIN_GAIN = Math.max(0.0, SUSTAIN_GAIN-0.005);
     else if(e.key==='.' ) SUSTAIN_GAIN = Math.min(0.06, SUSTAIN_GAIN+0.005);
-    else if(e.key==='g' ) MOTION_GAIN = Math.max(0.0, MOTION_GAIN-0.2);
-    else if(e.key==='h' ) MOTION_GAIN = Math.min(6.0, MOTION_GAIN+0.2);
-    else if(e.key==='t' || e.key==='T'){ EDGE_THICKNESS = EDGE_THICKNESS%3 + 1; }
+    else if(e.key==='u'||e.key==='U') UP_GAIN = Math.min(1.0, UP_GAIN+0.05);
+    else if(e.key==='j'||e.key==='J') UP_GAIN = Math.max(0.0, UP_GAIN-0.05);
+    else if(e.key==='y'||e.key==='Y') SH_GAIN = Math.min(0.8, SH_GAIN+0.05);
+    else if(e.key==='H') SH_GAIN = Math.max(0.0, SH_GAIN-0.05);
+    else if(e.key==='k'||e.key==='K') UNDERPAINT_ON = !UNDERPAINT_ON;
     else if(e.key==='f'||e.key==='F') autoT=!autoT;
     else if(e.key==='c'||e.key==='C'){ for(let i=0;i<MAX_PARTICLES;i++) life[i]=0; }
-    else if(e.key==='H') showHUD=!showHUD; // Shift+H hides HUD too
+    else if(e.key==='?'){ console.log({GRID, DOT, SPAWN_MULT, ADD_GAIN, UP_GAIN, SH_GAIN, MOTION_GAIN, EDGE_THICKNESS}); }
     drawHUD();
   });
 
