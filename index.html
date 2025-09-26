@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Edge Dissolve — Bright Motion-Bias</title>
+<title>Edge Dissolve — Motion Sustain</title>
 <style>
   html,body{height:100%;margin:0;background:#000;overflow:hidden}
   #out{position:fixed;inset:0;display:block;width:100vw;height:100vh}
@@ -32,19 +32,21 @@
   const MAX_SAMPLE_W = 720;
   let   GRID = 3;
   let   DOT  = 1.1;
-  const EDGE_T = 48;            // lower → more edges caught
-  const CONTRAST_EXP = 1.25;    // spawn contrast curve (>1 = punchier)
-  const TRAIL  = 0.30;          // less fade → brighter (but still not smeary)
-  const LIFE_STEP = 0.038;      // longer than last version for more accumulation
-  const V_DAMP = 0.92;          // slight glide, not furry
-  let   ADD_GAIN = 0.30;        // additive alpha (brighter output)
+  const EDGE_T = 48;
+  const CONTRAST_EXP = 1.2;
+  const TRAIL  = 0.32;          // frame fade
+  let   LIFE_STEP = 0.040;      // base fade speed
+  const V_DAMP = 0.92;
+  let   ADD_GAIN = 0.32;        // brighter additive
   const TINT = [160,255,210];
   const CAP_DPR = 1;
 
-  // Motion bias → more spawn on foreground
-  let   MOTION_BIAS_ON = true;
-  const MOTION_GAIN = 3.0;      // how much motion amplifies spawn
-  const MOTION_DECAY = 0.88;    // temporal smoothing of motion
+  // Motion bias + sustain
+  let MOTION_BIAS_ON = true;           // spawn more where moving
+  const MOTION_GAIN = 3.0;
+  const MOTION_DECAY = 0.88;           // EMA of motion
+  let  SUSTAIN_ON = true;              // extend life in motion
+  let  SUSTAIN_GAIN = 0.030;           // how much life is recovered/frame in motion
   /* -------------------------------------------- */
 
   // particles
@@ -63,7 +65,7 @@
     size[i]=DOT*(0.85+Math.random()*0.35);
   }
 
-  // low-res flow field (light movement)
+  // low-res flow field (gentle movement)
   let FW=0,FH=0,fieldX=null,fieldY=null,fieldNext=0;
   function ensureField(w,h){
     const cell = 36;
@@ -107,23 +109,20 @@
   }
   resize(); addEventListener('resize', resize);
 
-  // analysis buffer
+  // analysis buffers
   let buf=document.createElement('canvas');
   let gb =buf.getContext('2d', { willReadFrequently:true });
-
   function luma(r,g,b){ return 0.2126*r+0.7152*g+0.0722*b; }
-
-  // previous luma for motion
-  let prevY=null;
+  let prevY=null, motionEMA=null, mW=0, mH=0;
 
   // HUD
   let fps=60,last=performance.now(),showHUD=true, SPAWN_MULT=1.0, autoT=true;
   function drawHUD(){
     if(!showHUD){ hud.style.display='none'; return; }
     hud.style.display='block';
-    hud.innerHTML = `<b>Edge Dissolve — Bright Motion-Bias</b> • ${fps.toFixed(0)} fps<br>
-    GRID ${GRID}px • DOT ${DOT.toFixed(2)}px • Spawn ${SPAWN_MULT.toFixed(2)} • Bright ${ADD_GAIN.toFixed(2)} • ${MOTION_BIAS_ON?'Motion+':'Motion-'} • ${autoT?'Auto':'Manual'}<br>
-    [ / ] grid • - / = dot • ; / ' spawn • B/N brightness • M motion bias • F auto • C clear • H HUD`;
+    hud.innerHTML = `<b>Edge Dissolve — Motion Sustain</b> • ${fps.toFixed(0)} fps<br>
+    GRID ${GRID}px • DOT ${DOT.toFixed(2)}px • Spawn ${SPAWN_MULT.toFixed(2)} • Bright ${ADD_GAIN.toFixed(2)} • ${MOTION_BIAS_ON?'Motion+':'Motion-'} • ${SUSTAIN_ON?'Sustain+':'Sustain-'}(${SUSTAIN_GAIN.toFixed(3)}) • ${autoT?'Auto':'Manual'}<br>
+    [ / ] grid • - / = dot • ; / ' spawn • B/N brightness • M motion bias • S sustain • , / . sustain − / + • F auto • C clear • H HUD`;
   }
 
   function loop(){
@@ -131,7 +130,6 @@
     const dt=Math.min(50, now-last); last=now;
     fps = 1000/Math.max(1,dt);
 
-    // brighter overall (less fade)
     g.fillStyle=`rgba(0,0,0,${TRAIL})`;
     g.fillRect(0,0,cnv.width,cnv.height);
 
@@ -141,6 +139,10 @@
     const coverScale=Math.max(cnv.width/vw, cnv.height/vh);
     const drawW=Math.min(MAX_SAMPLE_W, Math.ceil(vw*coverScale));
     const drawH=Math.ceil(drawW*(vh/vw));
+    if (!motionEMA || mW!==drawW || mH!==drawH){
+      motionEMA = new Float32Array(drawW*drawH);
+      mW=drawW; mH=drawH;
+    }
     buf.width=drawW; buf.height=drawH;
     gb.drawImage(v,0,0,drawW,drawH);
     const img=gb.getImageData(0,0,drawW,drawH).data;
@@ -149,27 +151,27 @@
     const ox=(cnv.width-dispW)/2, oy=(cnv.height-dispH)/2;
     const sx=dispW/drawW, sy=dispH/drawH;
 
+    // luma + motion (EMA)
     const Y=new Float32Array(drawW*drawH);
-    const M=prevY && prevY.length===Y.length ? prevY : new Float32Array(drawW*drawH);
     for(let y=0,i=0,p=0;y<drawH;y++){
       for(let x=0;x<drawW;x++,i++,p+=4){
         const L=luma(img[p],img[p+1],img[p+2]);
         Y[i]=L;
-        // motion = decayed abs diff
-        const d = prevY ? Math.abs(L - prevY[i]) : 0;
-        M[i] = (M[i]*MOTION_DECAY) + d*(1-MOTION_DECAY);
+        const prev = prevY?prevY[i]:L;
+        const d = Math.abs(L - prev);
+        motionEMA[i] = motionEMA[i]*MOTION_DECAY + d*(1-MOTION_DECAY);
       }
     }
     prevY = Y;
 
     // FPS-driven spawn budget
-    let budget = 16000;
+    let budget = 16500;
     if (autoT){
       if (fps<48) budget*=0.7;
       else if (fps>56) budget*=1.15;
     }
 
-    // Sobel edges with contrast curve + motion bias
+    // Sobel edges with contrast + motion bias
     const Gx=[-1,0,1,-2,0,2,-1,0,1], Gy=[-1,-2,-1,0,0,0,1,2,1];
     for(let y=1;y<drawH-1;y+=GRID){
       const row=y*drawW;
@@ -185,12 +187,12 @@
         let mag=Math.hypot(sxv,syv);
         if(mag<EDGE_T) continue;
 
-        // contrast curve
+        // punchier contrast
         mag = Math.pow((mag-EDGE_T)/255, CONTRAST_EXP)*255;
 
-        // motion emphasis
+        // foreground emphasis by motion
         if (MOTION_BIAS_ON){
-          const mot = M[row+x]/128;       // normalize
+          const mot = motionEMA[row+x]/128;
           mag *= (1 + MOTION_GAIN*Math.min(1, mot));
         }
 
@@ -208,18 +210,41 @@
       if (budget<=0) break;
     }
 
-    // draw
+    // very light motion underpainting for readability (cheap)
+    // draw micro-dots at a coarse grid where motionEMA is high
     g.globalCompositeOperation='lighter';
-    g.fillStyle = `rgba(${TINT[0]},${TINT[1]},${TINT[2]},${ADD_GAIN})`;
+    g.fillStyle = `rgba(${TINT[0]},${TINT[1]},${TINT[2]},${ADD_GAIN*0.35})`;
+    const stepU = GRID*2;
+    for (let y=0; y<drawH; y+=stepU){
+      const row = y*drawW;
+      for (let x=0; x<drawW; x+=stepU){
+        const m = motionEMA[row+x];
+        if (m < 15) continue;
+        const cx = ox + x*sx, cy = oy + y*sy;
+        g.fillRect(cx, cy, DOT*0.9, DOT*0.9);
+      }
+    }
 
+    // draw particles with motion sustain
+    g.fillStyle = `rgba(${TINT[0]},${TINT[1]},${TINT[2]},${ADD_GAIN})`;
     for(let i=0;i<MAX_PARTICLES;i++){
       if(life[i]<=0) continue;
+
       const f=sampleField(px[i],py[i]);
       vx[i]+=f[0]; vy[i]+=f[1];
       px[i]+=vx[i]; py[i]+=vy[i];
       vx[i]*=V_DAMP; vy[i]*=V_DAMP;
 
-      life[i]-=LIFE_STEP;
+      // sustain: reduce fade where motion is present
+      if (SUSTAIN_ON){
+        const mx = Math.max(0, Math.min(drawW-1, ((px[i]-ox)/sx)|0));
+        const my = Math.max(0, Math.min(drawH-1, ((py[i]-oy)/sy)|0));
+        const mVal = motionEMA[my*drawW + mx] || 0;   // ~0..255ish
+        const sustain = (mVal/255) * SUSTAIN_GAIN;    // 0..SUSTAIN_GAIN
+        life[i] = Math.min(1, life[i] - LIFE_STEP + sustain);
+      } else {
+        life[i] -= LIFE_STEP;
+      }
       if(life[i]<=0){ life[i]=0; continue; }
 
       const s=size[i]*(0.70+0.30*life[i]);
@@ -251,6 +276,9 @@
     else if(e.key==='b'||e.key==='B') ADD_GAIN = Math.min(0.6, ADD_GAIN+0.02);
     else if(e.key==='n'||e.key==='N') ADD_GAIN = Math.max(0.10, ADD_GAIN-0.02);
     else if(e.key==='m'||e.key==='M') MOTION_BIAS_ON = !MOTION_BIAS_ON;
+    else if(e.key==='s'||e.key==='S') SUSTAIN_ON = !SUSTAIN_ON;
+    else if(e.key===',' ) SUSTAIN_GAIN = Math.max(0.0, SUSTAIN_GAIN-0.005);
+    else if(e.key==='.' ) SUSTAIN_GAIN = Math.min(0.06, SUSTAIN_GAIN+0.005);
     else if(e.key==='f'||e.key==='F') autoT=!autoT;
     else if(e.key==='c'||e.key==='C'){ for(let i=0;i<MAX_PARTICLES;i++) life[i]=0; }
     else if(e.key==='h'||e.key==='H') showHUD=!showHUD;
