@@ -3,13 +3,12 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Motion-Dissolve Point Cloud</title>
+<title>Motion Dissolve — Point Cloud (Fast)</title>
 <style>
   html,body{height:100%;margin:0;background:#000;overflow:hidden}
   #out{position:fixed;inset:0;width:100vw;height:100vh;display:block;background:#000}
   #v{display:none}
-  #gate{position:fixed;inset:0;display:none;place-items:center;background:#000a;color:#0f8;
-        font:16px system-ui;text-align:center}
+  #gate{position:fixed;inset:0;display:none;place-items:center;background:#000a;color:#0f8;font:16px system-ui}
   #gate .box{border:1px solid #0f8;padding:16px 20px;border-radius:10px}
 </style>
 </head>
@@ -20,194 +19,133 @@
 
 <script>
 (function(){
-  const v=document.getElementById('v');
-  const cnv=document.getElementById('out');
-  const g=cnv.getContext('2d',{willReadFrequently:true});
-  const gate=document.getElementById('gate');
+  const v   = document.getElementById('v');
+  const cnv = document.getElementById('out');
+  const g   = cnv.getContext('2d', { willReadFrequently:true });
+  const gate= document.getElementById('gate');
 
-  /* ===== knobs ===== */
-  const CAP_DPR=1;
-  const SAMPLE_W=420;          // analysis width (240–480)
-  const GRID_BASE=6;           // base cloud grid (smaller = denser)
-  const BASE_MAX_R=2.0;        // base cloud dot radius max
-  const BASE_ALPHA=0.22;       // base cloud dot alpha
-  const GREEN=[0,255,120];
-
-  const DIFF_T=16;             // frame-diff threshold (lower = more dissolve)
-  const STRIDE=2;              // analysis stride for diff/grad
-  const FLOW_SPEED=26;         // particle initial speed along gradient
-  const NOISE=6;               // subtle wander (px/s)
-  const TRAIL_FADE=0.10;       // canvas fade each frame (0..1)
-  const MAX_PARTICLES=40000;
-  const PSIZE=[0.5,1.3];       // particle size range
-  const PLIFE=[0.6,1.8];       // seconds
-  /* ================= */
+  /* ---------- knobs (tune here) ---------- */
+  const CAP_DPR     = 1;     // keep 1 for TD
+  const SAMPLE_W    = 360;   // analysis width (240–480)
+  const GRID        = 5;     // grid step (smaller = denser dots)
+  const DOT_MIN     = 0.8;   // base dot size (px)
+  const DOT_MAX     = 2.0;   // max dot size (px)
+  const BASE_ALPHA  = 0.28;  // base dot opacity
+  const DIFF_T      = 16;    // motion threshold (lower = more dissolve)
+  const DECAY_RATE  = 0.92;  // per-frame decay of dissolve (0.85..0.97)
+  const DUST_CHANCE = 0.12;  // chance per hot cell to draw one “dust” speck
+  const DUST_ALPHA  = 0.22;  // dust speck opacity
+  const GREEN       = [0,255,120]; // matrix green
+  /* -------------------------------------- */
 
   function resize(){
-    const dpr=Math.min(CAP_DPR,window.devicePixelRatio||1);
-    const w=Math.max(1,Math.floor(innerWidth*dpr));
-    const h=Math.max(1,Math.floor(innerHeight*dpr));
-    cnv.width=w; cnv.height=h;
-    cnv.style.width=innerWidth+'px';
-    cnv.style.height=innerHeight+'px';
+    const dpr = Math.min(CAP_DPR, window.devicePixelRatio||1);
+    const w = Math.max(1, Math.floor(innerWidth  * dpr));
+    const h = Math.max(1, Math.floor(innerHeight * dpr));
+    cnv.width = w; cnv.height = h;
+    cnv.style.width = innerWidth + 'px';
+    cnv.style.height = innerHeight + 'px';
     g.setTransform(dpr,0,0,dpr,0,0);
   }
-  resize(); addEventListener('resize',resize);
+  resize(); addEventListener('resize', resize);
 
-  // offscreen buffers
-  const ana=document.createElement('canvas');
-  const ax=ana.getContext('2d',{willReadFrequently:true});
-  let prev=null;
+  // offscreen analysis
+  const ana = document.createElement('canvas');
+  const ax  = ana.getContext('2d', { willReadFrequently:true });
 
-  // particles: [x,y,vx,vy,life,max,size]
-  const P=new Float32Array(MAX_PARTICLES*7);
-  let pc=0;
+  // per-cell state (on the GRID lattice)
+  let prevL = null;      // previous luma per cell
+  let melt  = null;      // dissolve amount per cell (0..1)
 
-  function rnd(a,b){return a+Math.random()*(b-a);}
-  function luma(r,g,b){return 0.2126*r+0.7152*g+0.0722*b;}
+  function luma(r,g,b){ return 0.2126*r + 0.7152*g + 0.0722*b; }
 
-  // gradient (Sobel) on luma
-  function gradAt(data,w,x,y){
-    const xm=Math.max(0,x-1), xp=Math.min(w-1,x+1);
-    const ym=Math.max(0,y-1), yp=Math.min(wH-1,y+1);
+  function map(vw, vh){
+    const cover = Math.max(cnv.width/vw, cnv.height/vh);
+    const dispW = vw*cover, dispH = vh*cover;
+    const ox = (cnv.width - dispW)/2, oy = (cnv.height - dispH)/2;
+    return { ox, oy, sx: dispW/ana.width, sy: dispH/ana.height };
   }
-  // inline sobel to avoid function call per pixel:
-  function sobel(data,w,h,x,y){
-    const x0=Math.max(0,x-1), x1=x, x2=Math.min(w-1,x+1);
-    const y0=Math.max(0,y-1), y1=y, y2=Math.min(h-1,y+1);
-    function L(ix,iy){
-      const i=(iy*w+ix)*4;
-      return 0.2126*data[i]+0.7152*data[i+1]+0.0722*data[i+2];
-    }
-    const a=L(x0,y0), b=L(x1,y0), c=L(x2,y0);
-    const d=L(x0,y1),           f=L(x2,y1);
-    const g_=L(x0,y2), h_=L(x1,y2), i_=L(x2,y2);
-    const gx=(c+2*f+i_) - (a+2*d+g_);
-    const gy=(g_+2*h_+i_) - (a+2*b+c);
-    return [gx,gy];
-  }
-
-  function mapToDisplay(vw,vh){
-    const cover=Math.max(cnv.width/vw, cnv.height/vh);
-    const dispW=vw*cover, dispH=vh*cover;
-    const ox=(cnv.width-dispW)/2, oy=(cnv.height-dispH)/2;
-    return {ox,oy,sx:dispW/ana.width, sy:dispH/ana.height};
-  }
-
-  function spawn(mx,my,map,heat,gx,gy){
-    if(pc>=MAX_PARTICLES) return;
-    const idx=pc*7;
-    const X=map.ox + mx*map.sx;
-    const Y=map.oy + my*map.sy;
-
-    // direction = normalized gradient (flow), fallback to mild outward
-    let dx=gx, dy=gy;
-    const mag=Math.hypot(dx,dy)||1;
-    dx/=mag; dy/=mag;
-
-    const sp = FLOW_SPEED * (0.6 + Math.min(1,heat/64)); // a bit more with stronger motion
-    const jitter=(Math.random()-0.5)*0.6; // tiny angle jitter
-    const ca=Math.cos(jitter), sa=Math.sin(jitter);
-    const vx= (dx*ca - dy*sa)*sp;
-    const vy= (dx*sa + dy*ca)*sp;
-
-    P[idx]=X; P[idx+1]=Y; P[idx+2]=vx; P[idx+3]=vy;
-    P[idx+4]=0; P[idx+5]=rnd(PLIFE[0],PLIFE[1]); P[idx+6]=rnd(PSIZE[0],PSIZE[1]);
-    pc++;
-  }
-
-  let last=performance.now();
 
   function frame(){
-    const now=performance.now(); const dt=Math.min(0.05,(now-last)/1000); last=now;
-
-    // fade previous frame for ghosting
-    g.fillStyle=`rgba(0,0,0,${TRAIL_FADE})`; g.fillRect(0,0,cnv.width,cnv.height);
-
-    if(v.readyState>=2){
-      const vw=v.videoWidth||640, vh=v.videoHeight||480;
-      const aw=SAMPLE_W, ah=Math.round(aw*(vh/vw));
-      if(ana.width!==aw||ana.height!==ah){ ana.width=aw; ana.height=ah; prev=null; }
-
-      ax.drawImage(v,0,0,aw,ah);
-      const curr=ax.getImageData(0,0,aw,ah);
-      const d=curr.data;
-
-      const map=mapToDisplay(vw,vh);
-
-      // 1) BASE CLOUD (figure)
-      const step=GRID_BASE;
-      g.globalCompositeOperation='lighter';
-      for(let y=0;y<ah;y+=step){
-        for(let x=0;x<aw;x+=step){
-          const i=(y*aw+x)*4;
-          const L=luma(d[i],d[i+1],d[i+2]);          // 0..255
-          const a=BASE_ALPHA*(L/255);                // dimmer where darker
-          const r=0.3 + (L/255)*BASE_MAX_R;
-          g.fillStyle=`rgba(${GREEN[0]},${GREEN[1]},${GREEN[2]},${a})`;
-          g.beginPath();
-          g.arc(map.ox+x*map.sx, map.oy+y*map.sy, r, 0, Math.PI*2);
-          g.fill();
-        }
-      }
-
-      // 2) DISSOLVE PARTICLES (only where motion)
-      if(prev){
-        for(let y=1;y<ah-1;y+=STRIDE){
-          for(let x=1;x<aw-1;x+=STRIDE){
-            const i=(y*aw+x)*4;
-            const Lc=luma(d[i],d[i+1],d[i+2]);
-            const Lp=luma(prev[i],prev[i+1],prev[i+2]);
-            const dl=Math.abs(Lc-Lp);
-            if(dl>DIFF_T){
-              const [gx,gy]=sobel(d,aw,ah,x,y);
-              spawn(x,y,map,dl,gx,gy);
-            }
-          }
-        }
-      }
-      prev=d;
-    }
-
-    // update + draw particles
-    g.globalCompositeOperation='lighter';
-    for(let i=0;i<pc;){
-      const idx=i*7;
-      let x=P[idx], y=P[idx+1], vx=P[idx+2], vy=P[idx+3], life=P[idx+4], max=P[idx+5], size=P[idx+6];
-
-      // subtle noise drift
-      vx += (Math.random()*2-1)*NOISE*dt;
-      vy += (Math.random()*2-1)*NOISE*dt;
-
-      x += vx*dt; y += vy*dt; life += dt;
-
-      // render
-      const a=Math.max(0,1-life/max)*0.9;
-      g.fillStyle=`rgba(${GREEN[0]},${GREEN[1]},${GREEN[2]},${a})`;
-      g.beginPath(); g.arc(x,y,size,0,Math.PI*2); g.fill();
-
-      if(life>=max || x<-50 || y<-50 || x>cnv.width+50 || y>cnv.height+50){
-        const lastIdx=(pc-1)*7;
-        P[idx]=P[lastIdx]; P[idx+1]=P[lastIdx+1]; P[idx+2]=P[lastIdx+2];
-        P[idx+3]=P[lastIdx+3]; P[idx+4]=P[lastIdx+4]; P[idx+5]=P[lastIdx+5]; P[idx+6]=P[lastIdx+6];
-        pc--; continue;
-      }else{
-        P[idx]=x; P[idx+1]=y; P[idx+2]=vx; P[idx+3]=vy; P[idx+4]=life;
-        i++;
-      }
-    }
-    g.globalCompositeOperation='source-over';
-
     requestAnimationFrame(frame);
+
+    if (v.readyState < 2) return;
+
+    const vw = v.videoWidth || 640, vh = v.videoHeight || 480;
+    const aw = SAMPLE_W, ah = Math.round(aw * (vh/vw));
+    if (ana.width !== aw || ana.height !== ah) {
+      ana.width = aw; ana.height = ah;
+      prevL = null; melt = null;
+    }
+
+    ax.drawImage(v, 0, 0, aw, ah);
+    const img = ax.getImageData(0, 0, aw, ah).data;
+
+    // initialize per-cell buffers
+    const gw = Math.floor(aw / GRID);
+    const gh = Math.floor(ah / GRID);
+    if (!prevL || prevL.length !== gw*gh) {
+      prevL = new Float32Array(gw*gh);
+      melt  = new Float32Array(gw*gh);
+      prevL.fill(0); melt.fill(0);
+    }
+
+    const M = map(vw, vh);
+
+    // fade the whole canvas slightly for a soft temporal blend
+    g.fillStyle = 'rgba(0,0,0,0.08)';
+    g.fillRect(0,0,cnv.width,cnv.height);
+
+    // draw base cloud and update dissolve
+    // (use squares via fillRect — cheaper than arcs)
+    for (let gy = 0, j = 0; gy < gh; gy++) {
+      const y = gy*GRID;
+      for (let gx = 0; gx < gw; gx++, j++) {
+        const x = gx*GRID;
+        const i = ((y*aw)+x) * 4;
+        const L = luma(img[i], img[i+1], img[i+2]); // 0..255
+
+        // motion → increase melt; otherwise decay toward 0
+        const dl = Math.abs(L - prevL[j]);
+        prevL[j] = L;
+        if (dl > DIFF_T) {
+          melt[j] = 1; // “just melted”
+        } else {
+          melt[j] *= DECAY_RATE;
+        }
+
+        // dot size/alpha from brightness, reduced by melt
+        const size = DOT_MIN + (L/255) * (DOT_MAX - DOT_MIN);
+        const alpha = BASE_ALPHA * (L/255) * (1 - melt[j]);
+
+        // map to display coords
+        const dx = M.ox + x * M.sx;
+        const dy = M.oy + y * M.sy;
+
+        if (alpha > 0.004) {
+          g.fillStyle = `rgba(${GREEN[0]},${GREEN[1]},${GREEN[2]},${alpha})`;
+          // scale dot size by display scale so it looks consistent
+          g.fillRect(dx, dy, size * M.sx, size * M.sy);
+        }
+
+        // sparse dust specks inside melting cells (point-like, no velocity)
+        if (melt[j] > 0.4 && Math.random() < DUST_CHANCE) {
+          const rx = dx + (Math.random() - 0.5) * GRID * M.sx;
+          const ry = dy + (Math.random() - 0.5) * GRID * M.sy;
+          g.fillStyle = `rgba(${GREEN[0]},${GREEN[1]},${GREEN[2]},${DUST_ALPHA * melt[j]})`;
+          g.fillRect(rx, ry, 1, 1);
+        }
+      }
+    }
   }
 
   async function startCam(){
     try{
-      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false});
-      v.srcObject=stream; await v.play(); frame();
+      const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user' }, audio:false });
+      v.srcObject = stream; await v.play(); frame();
     }catch(e){
       gate.style.display='grid';
-      console.warn(e);
+      console.warn('Camera error:', e);
     }
   }
   window.addEventListener('load', startCam);
