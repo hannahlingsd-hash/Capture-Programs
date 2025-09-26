@@ -3,21 +3,17 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Image Points + Motion Dissolve (Fast)</title>
+<title>Simple Image Dots + Motion Dissolve</title>
 <style>
   html,body{height:100%;margin:0;background:#000;overflow:hidden}
   #out{position:fixed;inset:0;display:block;width:100vw;height:100vh}
   #v{display:none}
-  #gate{position:fixed;inset:0;display:none;place-items:center;background:#000a;color:#0f8;font:16px system-ui}
-  #gate .box{border:1px solid #0f8;padding:10px 14px;border-radius:10px}
-  #hud{position:fixed;left:12px;bottom:12px;color:#bff;background:#0008;padding:8px 10px;border:1px solid #395;border-radius:10px;font:12px ui-monospace,system-ui}
-  #hud b{color:#eff}
+  #hud{position:fixed;left:10px;bottom:10px;padding:6px 8px;border:1px solid #395;border-radius:8px;background:#0008;color:#bff;font:12px ui-monospace,system-ui}
 </style>
 </head>
 <body>
 <canvas id="out"></canvas>
 <video id="v" playsinline muted></video>
-<div id="gate"><div class="box">Click to allow camera</div></div>
 <div id="hud"></div>
 
 <script>
@@ -26,38 +22,25 @@
   const cnv = document.getElementById('out');
   const g = cnv.getContext('2d', { willReadFrequently:true });
   const hud = document.getElementById('hud');
-  const gate = document.getElementById('gate');
 
-  /* ===================== KNOBS ===================== */
+  /* -------- simple knobs -------- */
   const CAP_DPR = 1;
-  const MAX_SAMPLE_W = 720;       // analysis width
+  const MAX_SAMPLE_W = 720; // analysis width
+  let BASE_GRID = 4;        // image-dot sampling step
+  let EDGE_GRID = 3;        // edge sampling step
+  let DOT = 1.1;            // dot size (supports <1)
+  let BASE_ADD = 0.30;      // base layer brightness
+  let PART_ADD = 0.30;      // particle brightness
+  const TRAIL = 0.30;       // frame fade (higher = shorter trails)
+  const EDGE_T = 48;        // sobel threshold
+  const LIFE_STEP = 0.038;  // particle fade speed
+  const V_DAMP = 0.92;      // particle damping
+  let SPAWN_MULT = 1.0;     // overall spawn
+  const TINT = [160,255,210];
+  let showHUD = true;
+  /* ------------------------------ */
 
-  // Base image point layer (existence)
-  let BASE_ON = true;
-  let BASE_GRID = 4;              // sampling step (smaller = denser)
-  let BASE_DOT  = 1.1;            // point size
-  let BASE_GAMMA = 1.15;          // luma curve (>1 boosts mid/highs)
-  let BASE_ADD = 0.26;            // additive alpha (brightness)
-  let BASE_TRAIL = 0.20;          // base layer fade (lower = more persistence)
-
-  // Edge particle layer (movement)
-  let PART_ON = true;
-  let EDGE_GRID = 3;              // edge sampling step
-  const EDGE_T = 48;              // sobel threshold
-  let SPAWN_MULT = 1.0;           // overall spawn
-  let ADD_GAIN = 0.30;            // particle brightness
-  const LIFE_STEP = 0.036;        // fade speed (higher = faster)
-  const V_DAMP = 0.92;            // velocity damping
-  let MOTION_BIAS_ON = true;      // emphasize moving regions
-  const MOTION_GAIN = 3.0;
-  const MOTION_DECAY = 0.88;
-
-  // Global
-  const TINT = [160,255,210];     // mint
-  let autoT = true;               // auto throttle
-  /* ================================================= */
-
-  // Sizing
+  // resize (cap DPR for TD)
   function resize(){
     const dpr = Math.min(CAP_DPR, window.devicePixelRatio||1);
     const w = Math.max(1, Math.floor(innerWidth*dpr));
@@ -66,50 +49,18 @@
     cnv.style.width=innerWidth+'px';
     cnv.style.height=innerHeight+'px';
     g.setTransform(dpr,0,0,dpr,0,0);
-    ensureField(w,h);
   }
   resize(); addEventListener('resize', resize);
 
-  // Offscreen buffer for analysis
+  // offscreen buffer
   const buf = document.createElement('canvas');
   const gb  = buf.getContext('2d', { willReadFrequently:true });
 
-  // Low-cost flow field (for slight particle drift)
-  let FW=0,FH=0,fieldX=null,fieldY=null,fieldNext=0;
-  function ensureField(w,h){
-    const cell = 36;
-    FW = Math.max(16, Math.round(w/cell));
-    FH = Math.max(12, Math.round(h/cell));
-    fieldX = new Float32Array(FW*FH);
-    fieldY = new Float32Array(FW*FH);
-  }
-  function updateField(t){
-    if (t < fieldNext) return;
-    fieldNext = t + 0.12;
-    const ax=0.4, ay=0.4, fx=0.8, fy=0.6;
-    for (let j=0;j<FH;j++){
-      for (let i=0;i<FW;i++){
-        const u=i/FW, v=j/FH;
-        const dx=Math.sin((u*fx + t*0.16)*6.283)*ax;
-        const dy=Math.cos((v*fy - t*0.13)*6.283)*ay;
-        const len=Math.hypot(dx,dy)||1;
-        fieldX[j*FW+i]=dx/len*0.22;
-        fieldY[j*FW+i]=dy/len*0.22;
-      }
-    }
-  }
-  function sampleField(x,y){
-    const ci = Math.max(0, Math.min(FW-1, (x/cnv.width*FW)|0));
-    const cj = Math.max(0, Math.min(FH-1, (y/cnv.height*FH)|0));
-    const k = cj*FW+ci;
-    return [fieldX[k], fieldY[k]];
-  }
-
-  // Utils
+  // utils
   function luma(r,g,b){ return 0.2126*r + 0.7152*g + 0.0722*b; }
 
-  // Particles (pooled)
-  const MAX_PARTICLES = 90000;
+  // particles (simple pooled system)
+  const MAX_PARTICLES = 80000;
   const px=new Float32Array(MAX_PARTICLES), py=new Float32Array(MAX_PARTICLES);
   const vx=new Float32Array(MAX_PARTICLES), vy=new Float32Array(MAX_PARTICLES);
   const life=new Float32Array(MAX_PARTICLES), size=new Float32Array(MAX_PARTICLES);
@@ -117,42 +68,39 @@
   function spawn(x,y,nx,ny,mag){
     const i=head; head=(head+1)%MAX_PARTICLES;
     px[i]=x; py[i]=y;
-    const spd = Math.min(1, mag/220) * 0.5;
+    const spd = Math.min(1, mag/220)*0.5;   // small kick along edge normal
     vx[i]=nx*spd; vy[i]=ny*spd;
     life[i]=1.0;
-    size[i]=BASE_DOT*(0.85+Math.random()*0.35);
+    size[i]=DOT*(0.9+Math.random()*0.2);
   }
 
-  // Motion buffer
-  let prevY=null, mot=null;
+  // previous luma for simple motion bias
+  let prevY=null;
 
-  // HUD & perf
-  let fps=60, last=performance.now(), showHUD=true;
+  // HUD
+  let fps=60, last=performance.now();
   function drawHUD(){
     if(!showHUD){ hud.style.display='none'; return; }
     hud.style.display='block';
-    hud.innerHTML =
-      `<b>Image Points + Motion Dissolve</b> • ${fps.toFixed(0)} fps<br>
-       Base ${BASE_ON?'on':'off'}: grid ${BASE_GRID}px • dot ${BASE_DOT.toFixed(2)}px • γ ${BASE_GAMMA.toFixed(2)} • add ${BASE_ADD.toFixed(2)}<br>
-       Part ${PART_ON?'on':'off'}: edge ${EDGE_GRID}px • spawn ${SPAWN_MULT.toFixed(2)} • bright ${ADD_GAIN.toFixed(2)} • ${MOTION_BIAS_ON?'motion+':'motion-'} • ${autoT?'auto':'manual'}<br>
-       1 base • 2 particles • ,/. base grid • [/] edge grid • -/= dot • ;/' spawn • B/N brightness • G gamma • M motion • H HUD`;
+    hud.textContent =
+      `Simple Image Dots + Motion Dissolve — ${fps|0} fps
+Base grid ${BASE_GRID}px • Edge grid ${EDGE_GRID}px • Dot ${DOT.toFixed(2)}px • Spawn ${SPAWN_MULT.toFixed(2)} • Bright ${(BASE_ADD).toFixed(2)}
+,/. base • [/] edge • -/= dot • ;/' spawn • B/N brightness • H HUD`;
   }
 
   function loop(){
     const now = performance.now();
-    const dt = Math.min(50, now-last); last=now;
-    fps = 1000 / Math.max(1, dt);
+    const dt  = Math.min(50, now-last); last=now;
+    fps = 1000/Math.max(1,dt);
 
-    // Slightly longer persistence than before to keep body visible
-    g.fillStyle = `rgba(0,0,0,${Math.max(BASE_TRAIL, 0.28)})`;
+    // fade to black (short trail)
+    g.fillStyle=`rgba(0,0,0,${TRAIL})`;
     g.fillRect(0,0,cnv.width,cnv.height);
 
-    updateField(now*0.001);
-
     const vw=v.videoWidth||640, vh=v.videoHeight||480;
-    const coverScale = Math.max(cnv.width/vw, cnv.height/vh);
-    const drawW = Math.min(MAX_SAMPLE_W, Math.ceil(vw*coverScale));
-    const drawH = Math.ceil(drawW * (vh/vw));
+    const coverScale=Math.max(cnv.width/vw, cnv.height/vh);
+    const drawW=Math.min(MAX_SAMPLE_W, Math.ceil(vw*coverScale));
+    const drawH=Math.ceil(drawW*(vh/vw));
     buf.width=drawW; buf.height=drawH;
     gb.drawImage(v,0,0,drawW,drawH);
     const data = gb.getImageData(0,0,drawW,drawH).data;
@@ -161,130 +109,109 @@
     const ox=(cnv.width-dispW)/2, oy=(cnv.height-dispH)/2;
     const sx=dispW/drawW, sy=dispH/drawH;
 
-    // Luma + motion
-    const Y = new Float32Array(drawW*drawH);
-    if (!mot || mot.length!==Y.length) mot = new Float32Array(drawW*drawH);
-    for (let y=0,i=0,p=0; y<drawH; y++){
-      for (let x=0; x<drawW; x++,i++,p+=4){
-        const L = luma(data[p],data[p+1],data[p+2]);
+    // build luma + motion diff (very cheap)
+    const Y=new Float32Array(drawW*drawH);
+    const M=prevY && prevY.length===Y.length ? prevY.slice(0) : new Float32Array(drawW*drawH);
+    for(let y=0,i=0,p=0;y<drawH;y++){
+      for(let x=0;x<drawW;x++,i++,p+=4){
+        const L=luma(data[p],data[p+1],data[p+2]);
         Y[i]=L;
-        const d = prevY ? Math.abs(L - prevY[i]) : 0;
-        mot[i] = mot[i]*MOTION_DECAY + d*(1-MOTION_DECAY);
+        M[i]=prevY?Math.abs(L-prevY[i]):0;
       }
     }
     prevY = Y;
 
-    // ===== LAYER A: image points (existence) =====
-    if (BASE_ON){
-      g.globalCompositeOperation='lighter';
-      const a = Math.max(0.12, BASE_ADD); // keep bright
-      g.fillStyle = `rgba(${TINT[0]},${TINT[1]},${TINT[2]},${a})`;
-      const stepY = BASE_GRID, stepX = BASE_GRID;
-
-      // simple contrast curve via gamma
-      const gamma = BASE_GAMMA;
-      for (let y=0; y<drawH; y+=stepY){
-        const row = y*drawW;
-        for (let x=0; x<drawW; x+=stepX){
-          const L = Y[row+x]/255;                   // 0..1
-          const w = Math.pow(L, 1/gamma);          // boost mids/highs
-          if (w < 0.08) continue;                  // avoid dark noise
-          // small mod: add motion to keep moving areas from vanishing
-          const m = MOTION_BIAS_ON ? Math.min(1, mot[row+x]/128) : 0;
-          const s = BASE_DOT * (0.9 + 0.2*m);
-          g.fillRect(ox + x*sx, oy + y*sy, s, s);
-        }
+    // ===== Layer A: image dots (anchoring figure) =====
+    g.globalCompositeOperation='lighter';
+    g.fillStyle = `rgba(${TINT[0]},${TINT[1]},${TINT[2]},${BASE_ADD})`;
+    for(let y=0;y<drawH;y+=BASE_GRID){
+      const row=y*drawW;
+      for(let x=0;x<drawW;x+=BASE_GRID){
+        const L=Y[row+x]/255;           // 0..1
+        if (L<0.08) continue;           // skip dark
+        // light gamma-ish boost (no pow): L*(0.6+0.4*L)
+        const w=L*(0.6+0.4*L);
+        if (w<0.1) continue;
+        const s=DOT;
+        g.fillRect(ox+x*sx, oy+y*sy, s, s);
       }
-      g.globalCompositeOperation='source-over';
     }
+    g.globalCompositeOperation='source-over';
 
-    // ===== LAYER B: motion dissolve particles =====
-    if (PART_ON){
-      // FPS-driven spawn budget
-      let budget = 16000;
-      if (autoT){ if (fps<48) budget*=0.7; else if (fps>56) budget*=1.15; }
+    // ===== Layer B: motion-biased edge particles =====
+    // budget tied to fps (keeps things smooth)
+    let budget = fps<48 ? 10000 : 16000;
 
-      // Sobel edges
-      const Gx=[-1,0,1,-2,0,2,-1,0,1], Gy=[-1,-2,-1,0,0,0,1,2,1];
-      for(let y=1;y<drawH-1;y+=EDGE_GRID){
-        const row=y*drawW;
-        for(let x=1;x<drawW-1;x+=EDGE_GRID){
-          let sxv=0, syv=0, k=0;
-          for(let j=-1;j<=1;j++){
-            const r=row+j*drawW;
-            for(let i=-1;i<=1;i++,k++){
-              const val=Y[r+x+i];
-              sxv+=Gx[k]*val; syv+=Gy[k]*val;
-            }
+    const Gx=[-1,0,1,-2,0,2,-1,0,1], Gy=[-1,-2,-1,0,0,0,1,2,1];
+    for(let y=1;y<drawH-1;y+=EDGE_GRID){
+      const row=y*drawW;
+      for(let x=1;x<drawW-1;x+=EDGE_GRID){
+        let sxv=0, syv=0, k=0;
+        for(let j=-1;j<=1;j++){
+          const r=row+j*drawW;
+          for(let i=-1;i<=1;i++,k++){
+            const val=Y[r+x+i];
+            sxv+=Gx[k]*val; syv+=Gy[k]*val;
           }
-          let mag=Math.hypot(sxv,syv);
-          if(mag<EDGE_T) continue;
+        }
+        let mag=Math.hypot(sxv,syv);
+        if(mag<EDGE_T) continue;
 
-          // motion emphasis in spawn probability
-          if (MOTION_BIAS_ON){
-            const motv = mot[row+x]/128;
-            mag *= (1 + MOTION_GAIN*Math.min(1,motv));
-          }
+        // simple motion emphasis
+        const mot = M[row+x]/128;
+        mag *= (1 + 2.5*Math.min(1,mot));
 
+        let prob = Math.min(1, (mag-EDGE_T)*0.012*SPAWN_MULT);
+        if (Math.random()<prob && --budget>0){
           const len = Math.max(1e-6, Math.hypot(sxv,syv));
           const nx=sxv/len, ny=syv/len;
-          let prob = Math.min(1, (mag-EDGE_T)*0.012*SPAWN_MULT);
-          if (Math.random()<prob && --budget>0){
-            const cx=ox + x*sx + (Math.random()-0.5)*sx*EDGE_GRID*0.25;
-            const cy=oy + y*sy + (Math.random()-0.5)*sy*EDGE_GRID*0.25;
-            spawn(cx,cy,nx,ny,mag);
-          }
-          if (budget<=0) break;
+          const cx=ox+x*sx+(Math.random()-0.5)*sx*EDGE_GRID*0.25;
+          const cy=oy+y*sy+(Math.random()-0.5)*sy*EDGE_GRID*0.25;
+          spawn(cx,cy,nx,ny,mag);
         }
         if (budget<=0) break;
       }
-
-      // update + draw
-      g.globalCompositeOperation='lighter';
-      g.fillStyle = `rgba(${TINT[0]},${TINT[1]},${TINT[2]},${ADD_GAIN})`;
-      for(let i=0;i<MAX_PARTICLES;i++){
-        if(life[i]<=0) continue;
-        const f = sampleField(px[i],py[i]);
-        vx[i]+=f[0]; vy[i]+=f[1];
-        px[i]+=vx[i]; py[i]+=vy[i];
-        vx[i]*=V_DAMP; vy[i]*=V_DAMP;
-        life[i]-=LIFE_STEP;
-        if(life[i]<=0){ life[i]=0; continue; }
-        const s = BASE_DOT*(0.70+0.30*life[i]);
-        g.fillRect(px[i],py[i],s,s);
-      }
-      g.globalCompositeOperation='source-over';
+      if (budget<=0) break;
     }
+
+    // update + draw particles (no extra fields)
+    g.globalCompositeOperation='lighter';
+    g.fillStyle=`rgba(${TINT[0]},${TINT[1]},${TINT[2]},${PART_ADD})`;
+    for(let i=0;i<MAX_PARTICLES;i++){
+      if(life[i]<=0) continue;
+      px[i]+=vx[i]; py[i]+=vy[i];
+      vx[i]*=V_DAMP; vy[i]*=V_DAMP;
+      life[i]-=LIFE_STEP;
+      if(life[i]<=0){ life[i]=0; continue; }
+      const s=DOT*(0.7+0.3*life[i]);
+      g.fillRect(px[i],py[i],s,s);
+    }
+    g.globalCompositeOperation='source-over';
 
     drawHUD();
     requestAnimationFrame(loop);
   }
 
+  // camera + controls
   async function startCam(){
     try{
       const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false});
       v.srcObject=stream; await v.play(); loop();
-    }catch(e){ gate.style.display='grid'; console.warn(e); }
+    }catch(e){ console.warn('Camera start failed:', e); }
   }
   window.addEventListener('load', startCam);
-  gate.addEventListener('click', ()=>{ gate.style.display='none'; startCam(); });
 
-  // Controls
-  addEventListener('keydown',(e)=>{
-    if(e.key==='1') BASE_ON=!BASE_ON;
-    else if(e.key==='2') PART_ON=!PART_ON;
-    else if(e.key===',' ) BASE_GRID = Math.min(10, BASE_GRID+1);
+  addEventListener('keydown', (e)=>{
+    if(e.key===',' ) BASE_GRID = Math.min(10, BASE_GRID+1);
     else if(e.key==='.' ) BASE_GRID = Math.max(2, BASE_GRID-1);
     else if(e.key==='[' ) EDGE_GRID = Math.min(10, EDGE_GRID+1);
     else if(e.key===']' ) EDGE_GRID = Math.max(2, EDGE_GRID-1);
-    else if(e.key==='-' ) BASE_DOT = Math.max(0.6, BASE_DOT-0.1);
-    else if(e.key==='=' ) BASE_DOT = Math.min(2.2, BASE_DOT+0.1);
+    else if(e.key==='-' ) DOT = Math.max(0.6, DOT-0.1);
+    else if(e.key==='=' ) DOT = Math.min(2.2, DOT+0.1);
     else if(e.key===';' ) SPAWN_MULT = Math.max(0.3, SPAWN_MULT*0.9);
     else if(e.key==="'" ) SPAWN_MULT = Math.min(3.0, SPAWN_MULT*1.1);
-    else if(e.key==='b'||e.key==='B'){ ADD_GAIN = Math.min(0.6, ADD_GAIN+0.02); BASE_ADD = Math.min(0.6, BASE_ADD+0.02); }
-    else if(e.key==='n'||e.key==='N'){ ADD_GAIN = Math.max(0.12, ADD_GAIN-0.02); BASE_ADD = Math.max(0.12, BASE_ADD-0.02); }
-    else if(e.key==='g'||e.key==='G'){ BASE_GAMMA = Math.min(1.6, BASE_GAMMA+0.05); }
-    else if(e.key==='m'||e.key==='M'){ MOTION_BIAS_ON=!MOTION_BIAS_ON; }
+    else if(e.key==='b'||e.key==='B'){ BASE_ADD=Math.min(0.6, BASE_ADD+0.02); PART_ADD=Math.min(0.6, PART_ADD+0.02); }
+    else if(e.key==='n'||e.key==='N'){ BASE_ADD=Math.max(0.12, BASE_ADD-0.02); PART_ADD=Math.max(0.12, PART_ADD-0.02); }
     else if(e.key==='h'||e.key==='H'){ showHUD=!showHUD; }
     drawHUD();
   });
@@ -294,3 +221,4 @@
 </script>
 </body>
 </html>
+
