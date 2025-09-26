@@ -3,26 +3,19 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Matrix Point-Cloud (Webcam)</title>
+<title>Matrix Point-Cloud (Webcam) — Fast</title>
 <style>
   html,body{height:100%;margin:0;background:#000;overflow:hidden}
   #out{position:fixed;inset:0;display:block;width:100vw;height:100vh}
   #v{display:none}
-  /* Fallback click-to-start overlay if autoplay is blocked */
-  #gate{
-    position:fixed;inset:0;display:none;place-items:center;
-    background:rgba(0,0,0,.9);color:#00ff88;font:16px/1.6 system-ui,Segoe UI,Arial;
-    text-align:center;cursor:pointer;letter-spacing:.5px
-  }
-  #gate .box{border:1px solid #00ff88;padding:18px 22px;border-radius:10px}
+  #gate{position:fixed;inset:0;display:none;place-items:center;background:#000a;color:#0f8;font:16px system-ui}
+  #gate .box{border:1px solid #0f8;padding:16px 20px;border-radius:10px}
 </style>
 </head>
 <body>
 <canvas id="out"></canvas>
 <video id="v" playsinline muted></video>
-<div id="gate"><div class="box">
-  CAMERA PERMISSION NEEDED<br/>Click to start
-</div></div>
+<div id="gate"><div class="box">Camera permission needed — click to start</div></div>
 
 <script>
 (function(){
@@ -31,84 +24,89 @@
   const g = cnv.getContext('2d', { willReadFrequently:true });
   const gate = document.getElementById('gate');
 
-  // Rendering params (no UI)
-  const GRID = 6;          // sampling step in pixels (smaller = denser)
-  const MAX_R = 6;         // max dot radius
-  const JITTER = 0.25;     // 0..1 jitter inside grid cell
-  const TRAIL = 0.15;      // frame fade (higher = longer trails)
-  const GREEN = [0, 255, 120]; // matrix-like green
-  const CONTRAST = 1.35;   // simple contrast
-  const BRIGHT = 0;        // brightness offset
+  /* -------- performance knobs -------- */
+  const MAX_SAMPLE_W = 640;   // <= reduce to 480/360 if still slow
+  const GRID = 6;             // sampling step (bigger = fewer dots)
+  const MAX_R = 5;            // max dot radius
+  const JITTER = 0.22;        // jitter inside cell
+  const TRAIL = 0.18;         // frame fade (0..1), higher = longer trail
+  const CONTRAST = 1.25;      // simple contrast
+  const BRIGHT = 0;           // brightness offset
+  const GREEN = [0,255,120];  // matrix-like green
+  const CAP_DPR = 1;          // cap devicePixelRatio to 1 for speed
+  /* ----------------------------------- */
 
   let running = false, raf = null;
 
+  // map TD panel size → canvas CSS size, but cap internal pixel ratio
   function resize() {
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    cnv.width  = Math.floor(innerWidth  * dpr);
-    cnv.height = Math.floor(innerHeight * dpr);
-    cnv.style.width  = innerWidth + 'px';
+    const dpr = Math.min(CAP_DPR, window.devicePixelRatio || 1);
+    const w = Math.max(1, Math.floor(innerWidth  * dpr));
+    const h = Math.max(1, Math.floor(innerHeight * dpr));
+    cnv.width = w; cnv.height = h;
+    cnv.style.width = innerWidth + 'px';
     cnv.style.height = innerHeight + 'px';
     g.setTransform(dpr,0,0,dpr,0,0);
   }
   resize(); addEventListener('resize', resize);
+
+  // offscreen buffer for cheap sampling
+  let buf = document.createElement('canvas');
+  let gb = buf.getContext('2d', { willReadFrequently:true });
 
   function luma(r,g,b){ return 0.2126*r + 0.7152*g + 0.0722*b; }
 
   function loop() {
     if (!running) return;
 
-    // fade previous frame → ghosted trail
+    // ghost trail
     g.fillStyle = `rgba(0,0,0,${TRAIL})`;
     g.fillRect(0,0,cnv.width,cnv.height);
 
     const vw = v.videoWidth || 640, vh = v.videoHeight || 480;
 
-    // scale video to cover canvas while preserving aspect
-    const scale = Math.max(cnv.width / vw, cnv.height / vh);
-    const dw = vw * scale, dh = vh * scale;
-    const ox = (cnv.width - dw)/2, oy = (cnv.height - dh)/2;
+    // scale video to cover canvas, but sample from a *downscaled* buffer
+    const coverScale = Math.max(cnv.width / vw, cnv.height / vh);
+    const drawW = Math.min(MAX_SAMPLE_W, Math.ceil(vw * coverScale));
+    const drawH = Math.ceil(drawW * (vh / vw));
 
-    // draw one frame to an offscreen canvas for pixel sampling
-    if (!loop.buf) {
-      loop.buf = document.createElement('canvas');
-      loop.ctx = loop.buf.getContext('2d', { willReadFrequently:true });
-    }
-    loop.buf.width = Math.ceil(dw);
-    loop.buf.height = Math.ceil(dh);
-    loop.ctx.drawImage(v, 0, 0, loop.buf.width, loop.buf.height);
+    buf.width = drawW;
+    buf.height = drawH;
+    gb.drawImage(v, 0, 0, drawW, drawH);
 
-    const step = GRID;
-    const img = loop.ctx.getImageData(0,0,loop.buf.width,loop.buf.height).data;
+    const img = gb.getImageData(0, 0, drawW, drawH).data;
 
-    // additive blend for glow
+    // compute how the sampled grid maps to display
+    const dispW = vw * coverScale;
+    const dispH = vh * coverScale;
+    const ox = (cnv.width - dispW)/2, oy = (cnv.height - dispH)/2;
+    const sx = dispW / drawW, sy = dispH / drawH;
+
+    // additive glow
     const prevOp = g.globalCompositeOperation;
     g.globalCompositeOperation = 'lighter';
 
-    for (let y=0; y<loop.buf.height; y+=step) {
-      for (let x=0; x<loop.buf.width; x+=step) {
-        const i = ((y*loop.buf.width)+x)*4;
-        let r = img[i], gg = img[i+1], b = img[i+2];
-
-        // contrast / brightness
+    for (let y = 0; y < drawH; y += GRID) {
+      for (let x = 0; x < drawW; x += GRID) {
+        const i = ((y * drawW) + x) * 4;
+        const r = img[i], gg = img[i+1], b = img[i+2];
         let L = ((luma(r,gg,b) - 128) * CONTRAST + 128) + BRIGHT;
-        if (L<0) L=0; else if (L>255) L=255;
+        if (L < 0) L = 0; else if (L > 255) L = 255;
 
-        // map to dot size & alpha
-        const radius = 0.5 + (L/255)*MAX_R;
-        const alpha  = 0.08 + (L/255)*0.65;
+        const radius = 0.5 + (L/255) * MAX_R;
+        const alpha  = 0.08 + (L/255) * 0.65;
 
-        // jitter inside cell
-        const jx = (Math.random()-0.5) * step * JITTER * 2;
-        const jy = (Math.random()-0.5) * step * JITTER * 2;
+        const jx = (Math.random()-0.5) * GRID * JITTER * sx * 2;
+        const jy = (Math.random()-0.5) * GRID * JITTER * sy * 2;
 
         g.fillStyle = `rgba(${GREEN[0]},${GREEN[1]},${GREEN[2]},${alpha})`;
         g.beginPath();
-        g.arc(ox + x + jx, oy + y + jy, radius, 0, Math.PI*2);
+        g.arc(ox + x * sx + jx, oy + y * sy + jy, radius, 0, Math.PI*2);
         g.fill();
       }
     }
-
     g.globalCompositeOperation = prevOp;
+
     raf = requestAnimationFrame(loop);
   }
 
@@ -118,24 +116,15 @@
       const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user' }, audio:false });
       v.srcObject = stream;
       await v.play();
-      running = true;
-      loop();
+      running = true; loop();
     } catch (e) {
-      // If blocked, show gate; user can click once to allow
-      gate.style.display = 'grid';
+      gate.style.display = 'grid'; // click-to-start fallback
       console.warn('Camera start failed:', e);
     }
   }
 
-  // Auto-start on load (helps in TouchDesigner Web Render)
   window.addEventListener('load', startCam);
-
-  // Fallback: one tap/click to request again if autoplay/permission blocked
-  gate.addEventListener('click', async () => {
-    gate.style.display = 'none';
-    await startCam();
-  });
-
+  gate.addEventListener('click', async () => { gate.style.display='none'; await startCam(); });
 })();
 </script>
 </body>
