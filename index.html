@@ -3,223 +3,215 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Matrix Particle Dissolve — Webcam</title>
+<title>Motion-Dissolve Point Cloud</title>
 <style>
   html,body{height:100%;margin:0;background:#000;overflow:hidden}
-  #out{position:fixed;inset:0;display:block;width:100vw;height:100vh}
+  #out{position:fixed;inset:0;width:100vw;height:100vh;display:block;background:#000}
   #v{display:none}
   #gate{position:fixed;inset:0;display:none;place-items:center;background:#000a;color:#0f8;
         font:16px system-ui;text-align:center}
   #gate .box{border:1px solid #0f8;padding:16px 20px;border-radius:10px}
-  #gate button{margin-top:10px;background:#002d1f;border:1px solid #0f8;color:#0f8;
-               padding:6px 10px;border-radius:8px;cursor:pointer}
 </style>
 </head>
 <body>
 <canvas id="out"></canvas>
 <video id="v" playsinline muted></video>
-<div id="gate"><div class="box">
-  <div id="msg">Camera permission needed — click “Try again”.</div>
-  <button id="retry">Try again</button>
-</div></div>
+<div id="gate"><div class="box">Camera permission needed — click to start</div></div>
 
 <script>
 (function(){
-  const v   = document.getElementById('v');
-  const cnv = document.getElementById('out');
-  const g   = cnv.getContext('2d', { willReadFrequently:true });
-  const gate= document.getElementById('gate');
-  const msg = document.getElementById('msg');
-  const retry=document.getElementById('retry');
+  const v=document.getElementById('v');
+  const cnv=document.getElementById('out');
+  const g=cnv.getContext('2d',{willReadFrequently:true});
+  const gate=document.getElementById('gate');
 
-  /* ===== knobs (tweak here) ===== */
-  const CAP_DPR        = 1;     // 1 = fastest in TouchDesigner
-  const SAMPLE_W       = 360;   // downscaled analysis width (240-480)
-  const DIFF_THRESHOLD = 18;    // sensitivity to motion/change (lower = more particles)
-  const EMIT_PER_HOT   = 6;     // particles to spawn per hot cell
-  const MAX_PARTICLES  = 45000; // global cap
-  const PARTICLE_SIZE  = [0.6, 2.2]; // min/max radius (px)
-  const PARTICLE_LIFE  = [0.6, 2.2]; // seconds
-  const GRAVITY        = 12;    // px/s^2 downward (after scale mapping)
-  const NOISE_STRENGTH = 40;    // px/s lateral drift
-  const FADE_TRAIL     = 0.10;  // canvas fade per frame (0..1) for ghosting
-  const GREEN          = [0,255,120]; // matrix color
-  /* ============================== */
+  /* ===== knobs ===== */
+  const CAP_DPR=1;
+  const SAMPLE_W=420;          // analysis width (240–480)
+  const GRID_BASE=6;           // base cloud grid (smaller = denser)
+  const BASE_MAX_R=2.0;        // base cloud dot radius max
+  const BASE_ALPHA=0.22;       // base cloud dot alpha
+  const GREEN=[0,255,120];
 
-  // sizing
+  const DIFF_T=16;             // frame-diff threshold (lower = more dissolve)
+  const STRIDE=2;              // analysis stride for diff/grad
+  const FLOW_SPEED=26;         // particle initial speed along gradient
+  const NOISE=6;               // subtle wander (px/s)
+  const TRAIL_FADE=0.10;       // canvas fade each frame (0..1)
+  const MAX_PARTICLES=40000;
+  const PSIZE=[0.5,1.3];       // particle size range
+  const PLIFE=[0.6,1.8];       // seconds
+  /* ================= */
+
   function resize(){
-    const dpr = Math.min(CAP_DPR, window.devicePixelRatio||1);
-    const w = Math.max(1, Math.floor(innerWidth  * dpr));
-    const h = Math.max(1, Math.floor(innerHeight * dpr));
-    cnv.width = w; cnv.height = h;
-    cnv.style.width = innerWidth+'px';
-    cnv.style.height= innerHeight+'px';
+    const dpr=Math.min(CAP_DPR,window.devicePixelRatio||1);
+    const w=Math.max(1,Math.floor(innerWidth*dpr));
+    const h=Math.max(1,Math.floor(innerHeight*dpr));
+    cnv.width=w; cnv.height=h;
+    cnv.style.width=innerWidth+'px';
+    cnv.style.height=innerHeight+'px';
     g.setTransform(dpr,0,0,dpr,0,0);
   }
-  resize(); addEventListener('resize', resize);
+  resize(); addEventListener('resize',resize);
 
-  // offscreen analysis buffers
-  let ana = document.createElement('canvas');
-  let ctx = ana.getContext('2d', { willReadFrequently:true });
-  let prev = null;
+  // offscreen buffers
+  const ana=document.createElement('canvas');
+  const ax=ana.getContext('2d',{willReadFrequently:true});
+  let prev=null;
 
-  // particles
-  const P = new Float32Array(MAX_PARTICLES * 7);
-  // fields: x,y,vx,vy,life,maxLife,size, stored as:
-  // [x,y,vx,vy,life,maxLife,size] per particle
-  let pCount = 0;
+  // particles: [x,y,vx,vy,life,max,size]
+  const P=new Float32Array(MAX_PARTICLES*7);
+  let pc=0;
 
-  function rnd(a,b){ return a + Math.random()*(b-a); }
-  function luma(r,g,b){ return 0.2126*r + 0.7152*g + 0.0722*b; }
+  function rnd(a,b){return a+Math.random()*(b-a);}
+  function luma(r,g,b){return 0.2126*r+0.7152*g+0.0722*b;}
 
-  // tiny hash noise (fast, pseudo Perlin-ish)
-  function hash(n){ return Math.sin(n*1e-3)*43758.5453 % 1; }
-  function noise2(x,y,t){
-    const i = Math.floor(x)*374761393 + Math.floor(y)*668265263 + Math.floor(t*60)*700001; // ~frame-based
-    return (hash(i)-0.5)*2; // -1..1
+  // gradient (Sobel) on luma
+  function gradAt(data,w,x,y){
+    const xm=Math.max(0,x-1), xp=Math.min(w-1,x+1);
+    const ym=Math.max(0,y-1), yp=Math.min(wH-1,y+1);
   }
-
-  function spawn(x, y, sx, sy, heat){
-    const nEmit = Math.min(EMIT_PER_HOT, MAX_PARTICLES - pCount);
-    for(let k=0;k<nEmit;k++){
-      const idx = pCount * 7;
-      // map analysis coords → display (cover)
-      const X = sx.originX + x * sx.scaleX;
-      const Y = sy.originY + y * sy.scaleY;
-
-      // initial velocity: slight outward burst + random
-      const ang = Math.random()*Math.PI*2;
-      const spd = 20 + heat * 1.2 + Math.random()*60;
-      const vx  = Math.cos(ang)*spd;
-      const vy  = Math.sin(ang)*spd - 10;
-
-      P[idx+0]= X;
-      P[idx+1]= Y;
-      P[idx+2]= vx;
-      P[idx+3]= vy;
-      P[idx+4]= 0;                      // life
-      P[idx+5]= rnd(PARTICLE_LIFE[0], PARTICLE_LIFE[1]); // maxLife (s)
-      P[idx+6]= rnd(PARTICLE_SIZE[0], PARTICLE_SIZE[1]); // size (px)
-      pCount++;
-      if (pCount>=MAX_PARTICLES) break;
+  // inline sobel to avoid function call per pixel:
+  function sobel(data,w,h,x,y){
+    const x0=Math.max(0,x-1), x1=x, x2=Math.min(w-1,x+1);
+    const y0=Math.max(0,y-1), y1=y, y2=Math.min(h-1,y+1);
+    function L(ix,iy){
+      const i=(iy*w+ix)*4;
+      return 0.2126*data[i]+0.7152*data[i+1]+0.0722*data[i+2];
     }
+    const a=L(x0,y0), b=L(x1,y0), c=L(x2,y0);
+    const d=L(x0,y1),           f=L(x2,y1);
+    const g_=L(x0,y2), h_=L(x1,y2), i_=L(x2,y2);
+    const gx=(c+2*f+i_) - (a+2*d+g_);
+    const gy=(g_+2*h_+i_) - (a+2*b+c);
+    return [gx,gy];
   }
 
-  function updateAndRender(dt){
-    // ghost the canvas
-    g.fillStyle = `rgba(0,0,0,${FADE_TRAIL})`;
-    g.fillRect(0,0,cnv.width,cnv.height);
-
-    g.globalCompositeOperation = 'lighter';
-    for(let i=0, w=0; i<pCount; ){
-      const idx = i*7;
-      let x=P[idx], y=P[idx+1], vx=P[idx+2], vy=P[idx+3], life=P[idx+4], maxL=P[idx+5], size=P[idx+6];
-
-      // physics
-      // noise drift (frame-based, cheap)
-      const t = performance.now()*0.001;
-      vx += noise2(x*0.3, y*0.3, t) * NOISE_STRENGTH * dt;
-      vy += GRAVITY * dt;
-
-      x += vx * dt;
-      y += vy * dt;
-      life += dt;
-
-      // out-of-bounds or expired → swap remove
-      if (life>=maxL || x<-50 || y<-50 || x>cnv.width+50 || y>cnv.height+50){
-        const lastIdx = (pCount-1)*7;
-        // swap this with last
-        P[idx]=P[lastIdx]; P[idx+1]=P[lastIdx+1]; P[idx+2]=P[lastIdx+2];
-        P[idx+3]=P[lastIdx+3]; P[idx+4]=P[lastIdx+4]; P[idx+5]=P[lastIdx+5]; P[idx+6]=P[lastIdx+6];
-        pCount--; continue;
-      }
-
-      // render
-      const a = Math.max(0.02, 1 - life/maxL); // fade out
-      g.fillStyle = `rgba(${GREEN[0]},${GREEN[1]},${GREEN[2]},${a*0.9})`;
-      g.beginPath();
-      g.arc(x, y, size, 0, Math.PI*2);
-      g.fill();
-
-      // write back
-      P[idx]=x; P[idx+1]=y; P[idx+2]=vx; P[idx+3]=vy; P[idx+4]=life;
-      i++; // only advance when we keep the particle
-    }
-    g.globalCompositeOperation = 'source-over';
+  function mapToDisplay(vw,vh){
+    const cover=Math.max(cnv.width/vw, cnv.height/vh);
+    const dispW=vw*cover, dispH=vh*cover;
+    const ox=(cnv.width-dispW)/2, oy=(cnv.height-dispH)/2;
+    return {ox,oy,sx:dispW/ana.width, sy:dispH/ana.height};
   }
 
-  function analysisToDisplay(vw, vh){
-    // scale video to cover canvas; compute mapping
-    const cover = Math.max(cnv.width/vw, cnv.height/vh);
-    const dispW = vw*cover, dispH = vh*cover;
-    const ox = (cnv.width - dispW)/2;
-    const oy = (cnv.height - dispH)/2;
-    return {
-      scaleX: dispW / ana.width,
-      scaleY: dispH / ana.height,
-      originX: ox,
-      originY: oy
-    };
+  function spawn(mx,my,map,heat,gx,gy){
+    if(pc>=MAX_PARTICLES) return;
+    const idx=pc*7;
+    const X=map.ox + mx*map.sx;
+    const Y=map.oy + my*map.sy;
+
+    // direction = normalized gradient (flow), fallback to mild outward
+    let dx=gx, dy=gy;
+    const mag=Math.hypot(dx,dy)||1;
+    dx/=mag; dy/=mag;
+
+    const sp = FLOW_SPEED * (0.6 + Math.min(1,heat/64)); // a bit more with stronger motion
+    const jitter=(Math.random()-0.5)*0.6; // tiny angle jitter
+    const ca=Math.cos(jitter), sa=Math.sin(jitter);
+    const vx= (dx*ca - dy*sa)*sp;
+    const vy= (dx*sa + dy*ca)*sp;
+
+    P[idx]=X; P[idx+1]=Y; P[idx+2]=vx; P[idx+3]=vy;
+    P[idx+4]=0; P[idx+5]=rnd(PLIFE[0],PLIFE[1]); P[idx+6]=rnd(PSIZE[0],PSIZE[1]);
+    pc++;
   }
 
-  let lastT = performance.now();
+  let last=performance.now();
 
   function frame(){
-    const now = performance.now();
-    const dt  = Math.min(0.05, (now - lastT)/1000); // cap dt
-    lastT = now;
+    const now=performance.now(); const dt=Math.min(0.05,(now-last)/1000); last=now;
 
-    if (v.readyState >= 2){
-      // set analysis size (respect aspect)
+    // fade previous frame for ghosting
+    g.fillStyle=`rgba(0,0,0,${TRAIL_FADE})`; g.fillRect(0,0,cnv.width,cnv.height);
+
+    if(v.readyState>=2){
       const vw=v.videoWidth||640, vh=v.videoHeight||480;
-      const anaW = SAMPLE_W;
-      const anaH = Math.round(anaW * (vh/vw));
-      if (ana.width !== anaW || ana.height !== anaH){
-        ana.width = anaW; ana.height = anaH;
-        prev = null;
-      }
-      ctx.drawImage(v, 0, 0, ana.width, ana.height);
-      const curr = ctx.getImageData(0,0,ana.width,ana.height).data;
+      const aw=SAMPLE_W, ah=Math.round(aw*(vh/vw));
+      if(ana.width!==aw||ana.height!==ah){ ana.width=aw; ana.height=ah; prev=null; }
 
-      if (prev){
-        const map = analysisToDisplay(vw, vh);
-        // scan grid; sparse stride for speed
-        const STRIDE = 2;
-        for(let y=0; y<ana.height; y+=STRIDE){
-          for(let x=0; x<ana.width; x+=STRIDE){
-            const i = ((y*ana.width)+x)*4;
-            const dl = Math.abs(
-              (curr[i]*0.2126 + curr[i+1]*0.7152 + curr[i+2]*0.0722) -
-              (prev[i]*0.2126 + prev[i+1]*0.7152 + prev[i+2]*0.0722)
-            );
-            if (dl > DIFF_THRESHOLD){
-              // heat scales emission energy a bit
-              spawn(x, y, {scaleX:map.scaleX, originX:map.originX},
-                         {scaleY:map.scaleY, originY:map.originY}, dl);
+      ax.drawImage(v,0,0,aw,ah);
+      const curr=ax.getImageData(0,0,aw,ah);
+      const d=curr.data;
+
+      const map=mapToDisplay(vw,vh);
+
+      // 1) BASE CLOUD (figure)
+      const step=GRID_BASE;
+      g.globalCompositeOperation='lighter';
+      for(let y=0;y<ah;y+=step){
+        for(let x=0;x<aw;x+=step){
+          const i=(y*aw+x)*4;
+          const L=luma(d[i],d[i+1],d[i+2]);          // 0..255
+          const a=BASE_ALPHA*(L/255);                // dimmer where darker
+          const r=0.3 + (L/255)*BASE_MAX_R;
+          g.fillStyle=`rgba(${GREEN[0]},${GREEN[1]},${GREEN[2]},${a})`;
+          g.beginPath();
+          g.arc(map.ox+x*map.sx, map.oy+y*map.sy, r, 0, Math.PI*2);
+          g.fill();
+        }
+      }
+
+      // 2) DISSOLVE PARTICLES (only where motion)
+      if(prev){
+        for(let y=1;y<ah-1;y+=STRIDE){
+          for(let x=1;x<aw-1;x+=STRIDE){
+            const i=(y*aw+x)*4;
+            const Lc=luma(d[i],d[i+1],d[i+2]);
+            const Lp=luma(prev[i],prev[i+1],prev[i+2]);
+            const dl=Math.abs(Lc-Lp);
+            if(dl>DIFF_T){
+              const [gx,gy]=sobel(d,aw,ah,x,y);
+              spawn(x,y,map,dl,gx,gy);
             }
           }
         }
       }
-      prev = curr;
+      prev=d;
     }
 
-    updateAndRender(dt);
+    // update + draw particles
+    g.globalCompositeOperation='lighter';
+    for(let i=0;i<pc;){
+      const idx=i*7;
+      let x=P[idx], y=P[idx+1], vx=P[idx+2], vy=P[idx+3], life=P[idx+4], max=P[idx+5], size=P[idx+6];
+
+      // subtle noise drift
+      vx += (Math.random()*2-1)*NOISE*dt;
+      vy += (Math.random()*2-1)*NOISE*dt;
+
+      x += vx*dt; y += vy*dt; life += dt;
+
+      // render
+      const a=Math.max(0,1-life/max)*0.9;
+      g.fillStyle=`rgba(${GREEN[0]},${GREEN[1]},${GREEN[2]},${a})`;
+      g.beginPath(); g.arc(x,y,size,0,Math.PI*2); g.fill();
+
+      if(life>=max || x<-50 || y<-50 || x>cnv.width+50 || y>cnv.height+50){
+        const lastIdx=(pc-1)*7;
+        P[idx]=P[lastIdx]; P[idx+1]=P[lastIdx+1]; P[idx+2]=P[lastIdx+2];
+        P[idx+3]=P[lastIdx+3]; P[idx+4]=P[lastIdx+4]; P[idx+5]=P[lastIdx+5]; P[idx+6]=P[lastIdx+6];
+        pc--; continue;
+      }else{
+        P[idx]=x; P[idx+1]=y; P[idx+2]=vx; P[idx+3]=vy; P[idx+4]=life;
+        i++;
+      }
+    }
+    g.globalCompositeOperation='source-over';
+
     requestAnimationFrame(frame);
   }
 
   async function startCam(){
     try{
-      const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'}, audio:false});
-      v.srcObject = stream; await v.play();
-      resize(); frame();
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false});
+      v.srcObject=stream; await v.play(); frame();
     }catch(e){
       gate.style.display='grid';
-      msg.textContent = 'Camera blocked: ' + e.message;
+      console.warn(e);
     }
   }
-
   window.addEventListener('load', startCam);
-  retry.addEventListener('click', ()=>{ gate.style.display='none'; startCam(); });
+  gate.addEventListener('click', ()=>{ gate.style.display='none'; startCam(); });
 })();
 </script>
 </body>
