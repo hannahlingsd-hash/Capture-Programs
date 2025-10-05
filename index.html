@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Wind-on-Wall — WebRender Fill</title>
+<title>Wind-on-Wall — WebRender Fill (TD-safe, mint stain)</title>
 <style>
   html,body{height:100%;margin:0;background:#000}
   .root{position:fixed;inset:0;background:#000}
@@ -17,7 +17,7 @@
   </div>
 
 <script>
-/* Fixed params from your screenshot */
+/* Fixed params (mint tint on stain) */
 const PARAMS = {
   dt: 2.0,         // seconds
   thr: 60,         // diff threshold
@@ -26,7 +26,7 @@ const PARAMS = {
   stainOn: true,
   decay: 0.930,    // residual decay
   strength: 0.35,  // residual strength
-  color: "#ffffff" // residual color
+  color: "#E8FFE8" // very slight green tint (near-white)
 };
 
 (async function(){
@@ -41,7 +41,7 @@ const PARAMS = {
   const maskCanvas = document.createElement('canvas');
   const maskCtx = maskCanvas.getContext('2d');
 
-  // Fit canvases to container at device pixel ratio
+  // Size to device pixels
   function fit(){
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     const rect = view.getBoundingClientRect();
@@ -50,8 +50,9 @@ const PARAMS = {
     [view, stain, proc, maskCanvas].forEach(c => { c.width = w; c.height = h; });
   }
   new ResizeObserver(fit).observe(document.body);
+  fit();
 
-  // Video source: autostart webcam (secure origin required: https or http://localhost)
+  // Video source: autostart webcam (https or http://localhost required)
   const vid = document.createElement('video');
   vid.playsInline = true; vid.muted = true; vid.autoplay = true;
 
@@ -88,7 +89,13 @@ const PARAMS = {
     ctx.restore();
   }
 
-  // Simple ring buffer of past frames (for Δt diffs)
+  // Timebase that works in TD even when video.currentTime is NaN for MediaStream
+  function nowSec(){
+    const t = vid.currentTime;
+    return (t && isFinite(t)) ? t : performance.now()/1000;
+  }
+
+  // Ring buffer of past frames
   const buf = []; const MAX_SEC = 14;
   function pushFrame(imgData, t){
     buf.push({ t, data: new Uint8ClampedArray(imgData.data), w: imgData.width, h: imgData.height });
@@ -96,7 +103,7 @@ const PARAMS = {
     while(buf.length && buf[0].t < cutoff) buf.shift();
   }
   function getPastFrame(delta){
-    const target = vid.currentTime - delta;
+    const target = nowSec() - delta;
     for(let i=buf.length-1;i>=0;i--) if(buf[i].t <= target) return buf[i];
     return buf[0] || null;
   }
@@ -104,14 +111,14 @@ const PARAMS = {
   // Render loop
   function tick(){
     requestAnimationFrame(tick);
-    if(vid.readyState < 2) return;
+    if(!(vid.videoWidth && vid.videoHeight)) return;
 
     const W = view.width, H = view.height;
 
     // Current frame
     drawFit(pctx, vid, W, H, PARAMS.blur);
     const curr = pctx.getImageData(0,0,W,H);
-    pushFrame(curr, vid.currentTime);
+    pushFrame(curr, nowSec());
 
     const past = getPastFrame(PARAMS.dt);
     if(!past) return;
@@ -145,13 +152,11 @@ const PARAMS = {
 
     // Residual staining
     if(PARAMS.stainOn){
-      // decay (fade the existing stain)
       sctx.globalCompositeOperation = 'destination-out';
       sctx.fillStyle = `rgba(0,0,0,${1 - PARAMS.decay})`;
       sctx.fillRect(0,0,W,H);
       sctx.globalCompositeOperation = 'source-over';
 
-      // build alpha mask from motion pixels
       const mImg = maskCtx.createImageData(W,H);
       const mdat = mImg.data;
       for(let j=0, k=0; j<md.length; j++, k+=4){
@@ -160,15 +165,13 @@ const PARAMS = {
       }
       maskCtx.putImageData(mImg, 0, 0);
 
-      // colorize + apply strength
       maskCtx.globalCompositeOperation = 'source-in';
-      maskCtx.fillStyle = PARAMS.color;
+      maskCtx.fillStyle = PARAMS.color;        // ← mint tint
       maskCtx.globalAlpha = PARAMS.strength;
       maskCtx.fillRect(0,0,W,H);
       maskCtx.globalAlpha = 1;
       maskCtx.globalCompositeOperation = 'source-over';
 
-      // add to stain
       sctx.drawImage(maskCanvas, 0, 0);
     }
 
@@ -180,8 +183,6 @@ const PARAMS = {
     }
   }
 
-  // Start
-  fit();
   requestAnimationFrame(tick);
   startWebcam();
   window.addEventListener('beforeunload', stopWebcam);
