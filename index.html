@@ -8,42 +8,12 @@
   html,body{height:100%;margin:0;background:#000}
   .root{position:fixed;inset:0;background:#000}
   canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;background:#000}
-  /* --- minimal UI --- */
-  .ui{position:fixed;left:12px;top:12px;z-index:10;
-      font:12px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial;
-      color:#ddd;background:rgba(0,0,0,.45);backdrop-filter:blur(4px);
-      border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:8px 10px;max-width:260px}
-  .ui label{display:flex;align-items:center;gap:8px;margin:6px 0}
-  .ui input[type="range"]{width:140px}
-  .ui .row{display:flex;justify-content:space-between;align-items:center;gap:10px}
-  .ui .val{min-width:46px;text-align:right;color:#9ad}
-  .ui button{all:unset;background:#1b1f24;color:#cfe;padding:4px 8px;border-radius:6px;border:1px solid #2a3340;cursor:pointer}
-  .ui button:active{transform:translateY(1px)}
 </style>
 </head>
 <body>
   <div class="root">
     <canvas id="view"></canvas>
     <canvas id="stain"></canvas>
-  </div>
-
-  <!-- Minimal control panel -->
-  <div class="ui" id="ui">
-    <label><input type="checkbox" id="recallOn"> Random recall</label>
-    <div class="row">
-      <span>Recall prob</span>
-      <input type="range" id="recallProb" min="0" max="0.05" step="0.001">
-      <span class="val" id="recallProbVal"></span>
-    </div>
-    <div class="row">
-      <span>Recall opacity</span>
-      <input type="range" id="recallAlpha" min="0" max="0.6" step="0.01">
-      <span class="val" id="recallAlphaVal"></span>
-    </div>
-    <div class="row">
-      <button id="recallOnce">Recall now</button>
-      <span style="opacity:.7">force one reappearance</span>
-    </div>
   </div>
 
 <script>
@@ -56,14 +26,7 @@ const PARAMS = {
   stainOn: true,
   decay: 0.935,
   strength: 0.8,     // stronger color presence
-  color: "#A6D0FF",  // soft blue
-
-  /* temporal cross-mapping (random remembering) */
-  recallOn: true,          // toggle random recall of past stains
-  recallProb: 0.012,       // per-frame probability of a recall
-  recallAlpha: 0.14,       // opacity of recalled stain
-  recallIntervalSec: 1.5,  // snapshot cadence
-  recallMax: 24            // snapshot buffer size
+  color: "#A6D0FF"    // soft blue 
 };
 
 (async function(){
@@ -101,6 +64,7 @@ const PARAMS = {
       vid.srcObject = mediaStream;
       await vid.play();
     }catch(e){
+      // Fallback: support ?src=clip.mp4 for testing without camera
       const qs = new URLSearchParams(location.search);
       const src = qs.get('src');
       if(src){ vid.src = src; vid.play().catch(()=>{}); }
@@ -143,62 +107,6 @@ const PARAMS = {
     for(let i=buf.length-1;i>=0;i--) if(buf[i].t <= target) return buf[i];
     return buf[0] || null;
   }
-
-  /* snapshot bank of the stain layer for non-deterministic recall */
-  const recallBank = [];
-  let lastSnapT = 0;
-  function maybeSnapshotStain(W,H, t){
-    if(!PARAMS.recallOn) return;
-    if(t - lastSnapT < PARAMS.recallIntervalSec) return;
-    lastSnapT = t;
-    const c = document.createElement('canvas');
-    c.width = W; c.height = H;
-    c.getContext('2d').drawImage(stain, 0, 0);
-    recallBank.push(c);
-    if(recallBank.length > PARAMS.recallMax) recallBank.shift();
-  }
-  function recallStainOnce(W,H, alpha = PARAMS.recallAlpha){
-    if(recallBank.length === 0) return;
-    const idx = (Math.random()*recallBank.length)|0;
-    const snap = recallBank[idx];
-    sctx.save();
-    sctx.globalAlpha = alpha;
-    sctx.globalCompositeOperation = 'source-over';
-    sctx.drawImage(snap, 0, 0, W, H);
-    sctx.restore();
-  }
-  function maybeRecallStain(W,H){
-    if(!PARAMS.recallOn) return;
-    if(Math.random() > PARAMS.recallProb) return;
-    recallStainOnce(W,H);
-  }
-
-  // Minimal UI wiring
-  const ui = {
-    recallOn: document.getElementById('recallOn'),
-    recallProb: document.getElementById('recallProb'),
-    recallProbVal: document.getElementById('recallProbVal'),
-    recallAlpha: document.getElementById('recallAlpha'),
-    recallAlphaVal: document.getElementById('recallAlphaVal'),
-    recallOnce: document.getElementById('recallOnce')
-  };
-  // initialize values
-  ui.recallOn.checked = PARAMS.recallOn;
-  ui.recallProb.value = PARAMS.recallProb;
-  ui.recallAlpha.value = PARAMS.recallAlpha;
-  ui.recallProbVal.textContent = PARAMS.recallProb.toFixed(3);
-  ui.recallAlphaVal.textContent = PARAMS.recallAlpha.toFixed(2);
-  // listeners
-  ui.recallOn.addEventListener('change', e => PARAMS.recallOn = e.target.checked);
-  ui.recallProb.addEventListener('input', e => {
-    PARAMS.recallProb = parseFloat(e.target.value);
-    ui.recallProbVal.textContent = PARAMS.recallProb.toFixed(3);
-  });
-  ui.recallAlpha.addEventListener('input', e => {
-    PARAMS.recallAlpha = parseFloat(e.target.value);
-    ui.recallAlphaVal.textContent = PARAMS.recallAlpha.toFixed(2);
-  });
-  ui.recallOnce.addEventListener('click', () => recallStainOnce(view.width, view.height, PARAMS.recallAlpha));
 
   // Render loop
   function tick(){
@@ -265,10 +173,6 @@ const PARAMS = {
       maskCtx.globalCompositeOperation = 'source-over';
 
       sctx.drawImage(maskCanvas, 0, 0);
-
-      // remember & maybe recall
-      maybeSnapshotStain(W,H, nowSec());
-      maybeRecallStain(W,H);
     }
 
     // Composite stain over view
