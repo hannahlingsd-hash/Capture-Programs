@@ -26,7 +26,14 @@ const PARAMS = {
   stainOn: true,
   decay: 0.935,
   strength: 0.8,     // stronger color presence
-  color: "#A6D0FF"    // soft blue 
+  color: "#A6D0FF",  // soft blue
+
+  /* NEW: temporal cross-mapping (random remembering) */
+  recallOn: true,          // toggle random recall of past stains
+  recallProb: 0.012,       // per-frame probability of a recall
+  recallAlpha: 0.14,       // opacity of recalled stain
+  recallIntervalSec: 1.5,  // snapshot cadence
+  recallMax: 24            // snapshot buffer size
 };
 
 (async function(){
@@ -108,6 +115,33 @@ const PARAMS = {
     return buf[0] || null;
   }
 
+  /* NEW: lightweight snapshot bank of the stain layer for non-deterministic recall */
+  const recallBank = [];
+  let lastSnapT = 0;
+  function maybeSnapshotStain(W,H, t){
+    if(!PARAMS.recallOn) return;
+    if(t - lastSnapT < PARAMS.recallIntervalSec) return;
+    lastSnapT = t;
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    c.getContext('2d').drawImage(stain, 0, 0);
+    recallBank.push(c);
+    if(recallBank.length > PARAMS.recallMax) recallBank.shift();
+  }
+  function maybeRecallStain(W,H){
+    if(!PARAMS.recallOn) return;
+    if(recallBank.length === 0) return;
+    if(Math.random() > PARAMS.recallProb) return;
+    const idx = (Math.random()*recallBank.length)|0;
+    const snap = recallBank[idx];
+    sctx.save();
+    sctx.globalAlpha = PARAMS.recallAlpha;
+    sctx.globalCompositeOperation = 'source-over';
+    // minimal: no transforms; exact re-projection
+    sctx.drawImage(snap, 0, 0, W, H);
+    sctx.restore();
+  }
+
   // Render loop
   function tick(){
     requestAnimationFrame(tick);
@@ -173,6 +207,10 @@ const PARAMS = {
       maskCtx.globalCompositeOperation = 'source-over';
 
       sctx.drawImage(maskCanvas, 0, 0);
+
+      /* NEW: remember current stain sparsely, and randomly recall an old one */
+      maybeSnapshotStain(W,H, nowSec());
+      maybeRecallStain(W,H);
     }
 
     // Composite stain over view
