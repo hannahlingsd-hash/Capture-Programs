@@ -51,15 +51,8 @@
   .row > span{text-align:right;color:#000}
   .row label{color:var(--fg)}
 
-  /* Drawing Filter (color / opacity) layout ONLY: shorter opacity slider */
-  .row.colorop{
-    grid-template-columns: 1fr auto 110px 44px !important;
-  }
-  .row.colorop input[type="range"]{
-    width:110px !important;
-    max-width:110px !important;
-    justify-self:start;
-  }
+  .row.colorop{ grid-template-columns: 1fr auto 110px 44px !important; }
+  .row.colorop input[type="range"]{ width:110px !important; max-width:110px !important; justify-self:start; }
 
   .btnRow{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
   .inlineRow{display:flex;align-items:center;gap:8px;margin:6px 0}
@@ -154,7 +147,6 @@
     <div class="row"><label>Span (s)</label><input id="recallSpan" type="range" min="0" max="3" step="0.1" value="0.4"><span id="recallSpanV">0.4</span></div>
     <div class="btnRow"><button id="recallNow" class="btn">Recall now</button></div>
 
-    <!-- Linger (formerly Haunt Map) -->
     <div class="group">Linger</div>
     <div class="row compact"><label>Enable linger</label><input id="hauntOn" type="checkbox"></div>
     <div class="row"><label>Persistence</label><input id="hauntPersist" type="range" min="0" max="1" step="0.01" value="0.70"><span id="hauntPersistV">0.70</span></div>
@@ -162,7 +154,6 @@
     <div class="row"><label>Stickiness</label><input id="hauntStick" type="range" min="0" max="2" step="0.1" value="1.0"><span id="hauntStickV">1.0</span></div>
     <div class="row compact"><label>Linger color</label><input id="hauntColor" type="color" value="#4a5e8a"></div>
 
-    <!-- Drawing Filter (Outlines) -->
     <div class="group">Drawing Filter (Outlines)</div>
     <div class="row"><label>Threshold</label><input id="edgeThr" type="range" min="0" max="255" step="1" value="40"><span id="edgeThrV">40</span></div>
 
@@ -317,8 +308,11 @@
     ctx.restore();
   }
 
-  /* ---------- Recording (Auto) ---------- */
+  /* ---------- Recording (Hi-res Backbuffer) ---------- */
   let recorder=null, chunks=[], recStartTime=0, recTimer=null, recMime="", recExt="webm";
+  // NEW: dedicated backbuffer for exact-resolution recording
+  let recCanvas=null, recCtx=null, recRaf=null;
+
   function bestSupported(){
     const mp4='video/mp4;codecs=avc1.42E01E,mp4a.40.2', webm='video/webm;codecs=vp9,opus', webm2='video/webm;codecs=vp8,opus';
     const canMp4 = !!(window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(mp4));
@@ -332,24 +326,77 @@
   }
   refreshSupportNote();
 
+  // REPLACED: startRecording uses a hi-res backbuffer locked to current preview DPR size
   function startRecording(){
-    const s=bestSupported();
+    const s = bestSupported();
     const mime = s.canMp4 ? s.mp4 : (s.canWebm ? s.webm : '');
-    if(!mime){ alert('Recording format not supported on this browser.'); return; }
+    if (!mime){ alert('Recording format not supported on this browser.'); return; }
 
-    const stream = can.final.captureStream ? can.final.captureStream(30) : can.final.mozCaptureStream(30);
-    chunks=[]; recorder = new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:8_000_000});
-    recMime=mime; recExt=mime.startsWith('video/mp4')?'mp4':'webm';
-    recorder.ondataavailable=e=>{ if(e.data && e.data.size) chunks.push(e.data); };
-    recorder.onstop=()=>{ const blob=new Blob(chunks,{type:recMime}); const a=document.createElement('a'); a.download=`wind_on_wall_${Date.now()}.${recExt}`; a.href=URL.createObjectURL(blob); a.click(); stopRecUI(); };
+    // Lock to current backing resolution (set by fit() with DPR)
+    let W = can.final.width|0, H = can.final.height|0;
+    if (W % 2) W--; if (H % 2) H--; // keep encoders happy
+    if (W < 2 || H < 2){ alert('Canvas not ready.'); return; }
+
+    recCanvas = document.createElement('canvas');
+    recCanvas.width = W; recCanvas.height = H;
+    recCtx = recCanvas.getContext('2d');
+
+    const stream = recCanvas.captureStream(30);
+
+    // Bitrate heuristic: ~0.07 bits-per-pixel-per-frame @30fps, clamped
+    const vbr = Math.min(25_000_000, Math.max(8_000_000, Math.floor(W*H*30*0.07)));
+    chunks = [];
+    recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: vbr });
+
+    recMime = mime;
+    recExt  = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+
+    recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+    recorder.onstop = () => {
+      if (recRaf) { cancelAnimationFrame(recRaf); recRaf = null; }
+      const blob = new Blob(chunks, { type: recMime });
+      const a = document.createElement('a');
+      a.download = `wind_on_wall_${W}x${H}_${Date.now()}.${recExt}`;
+      a.href = URL.createObjectURL(blob);
+      a.click();
+      stopRecUI();
+      recCanvas = recCtx = null;
+    };
+
+    // Blit preview → backbuffer every frame for pristine capture
+    function pump(){
+      recCtx.clearRect(0,0,W,H);
+      recCtx.drawImage(can.final, 0, 0, W, H);
+      recRaf = requestAnimationFrame(pump);
+    }
+    pump();
+
     recorder.start(250);
 
-    recStartTime=performance.now();
-    recTimer=setInterval(()=>{ const t=Math.floor((performance.now()-recStartTime)/1000); const mm=String(Math.floor(t/60)).padStart(2,'0'); const ss=String(t%60).padStart(2,'0'); recTime.textContent=`REC ${mm}:${ss}`; },250);
-    recHUD.style.display='flex'; recStartBtn.disabled=true; recStopBtn.disabled=false;
+    recStartTime = performance.now();
+    recTimer = setInterval(()=>{
+      const t = Math.floor((performance.now()-recStartTime)/1000);
+      const mm = String(Math.floor(t/60)).padStart(2,'0');
+      const ss = String(t%60).padStart(2,'0');
+      recTime.textContent = `REC ${mm}:${ss} — ${W}×${H}`;
+    }, 250);
+    recHUD.style.display = 'flex';
+    recStartBtn.disabled = true;
+    recStopBtn.disabled  = false;
+
+    const sup = bestSupported();
+    supportNote.innerHTML = `${W}×${H} • ${sup.canMp4?'MP4':'WebM'} @ ${(vbr/1e6).toFixed(1)} Mbps`;
   }
-  function stopRecording(){ if(recorder && recorder.state==='recording'){ recorder.stop(); } }
+
   function stopRecUI(){ clearInterval(recTimer); recTimer=null; recHUD.style.display='none'; recStartBtn.disabled=false; recStopBtn.disabled=true; }
+
+  // REPLACED: stopRecording cleans up the RAF too
+  function stopRecording(){
+    if (recorder && recorder.state === 'recording'){
+      try{ recorder.stop(); }catch(_){}
+    }
+    if (recRaf) { cancelAnimationFrame(recRaf); recRaf = null; }
+  }
   recStartBtn.addEventListener('click', startRecording);
   recStopBtn.addEventListener('click',  stopRecording);
 
@@ -454,7 +501,7 @@
   [hauntOn,hauntPersist,hauntRadius,hauntStick,hauntColor].forEach(x=>x&&x.addEventListener('input',syncHaunt));
   syncHaunt();
 
-  /* ---------- Drawing Filter (Outlines): compositing + reuse ---------- */
+  /* ---------- Drawing Filter (Outlines) ---------- */
   const edgeThr      = document.getElementById('edgeThr');
   const edgeThrV     = document.getElementById('edgeThrV');
 
@@ -663,23 +710,18 @@
     else if(s.canWebm){ mime=s.webm; ext='webm'; }
     else { alert('Export not supported on this browser. Try Safari (MP4) or Chrome/Firefox (WebM).'); return; }
 
-    // Pause live loop to remove contention (key to prevent laggy output)
     const prevSuspend = suspendLive; suspendLive = true;
 
     exportOneBtn.disabled=true; recStartBtn.disabled=true;
 
     const outCanvas=document.createElement('canvas'); outCanvas.width=vw; outCanvas.height=vh; const octx=outCanvas.getContext('2d');
-    const expChunks=[]; const stream=outCanvas.captureStream ? outCanvas.captureStream(30) : outCanvas.mozCaptureStream(30);
+    const expChunks=[]; const stream=outCanvas.captureStream(30);
     const expRecorder=new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:8_000_000});
     const recDone=new Promise(resolve=>{ expRecorder.ondataavailable=e=>{ if(e.data && e.data.size) expChunks.push(e.data); }; expRecorder.onstop=resolve; });
 
     const prev={ loop:vid.loop, rate:vid.playbackRate, paused:vid.paused, t:vid.currentTime };
     vid.pause(); vid.loop=false; vid.playbackRate=1;
 
-    // Run processing at native (1:1) size for accuracy, but on a dedicated pipeline
-    const nativeProcessing=true;
-
-    // Save and swap processing canvas sizes to source resolution
     const prevSizes={W:can.final.width,H:can.final.height,sW:can.stain.width,sH:can.stain.height,gW:can.ghost.width,gH:can.ghost.height,pW:proc.width,pH:proc.height,mW:maskCanvas.width,mH:maskCanvas.height,cW:colCanvas.width,cH:colCanvas.height,hW:hauntCanvas.width,hH:hauntCanvas.height,tW:tintCanvas.width,tH:tintCanvas.height,eW:edgeCanvas.width,eH:edgeCanvas.height};
     [can.stain,can.ghost,can.final,proc,maskCanvas,colCanvas,hauntCanvas,tintCanvas,edgeCanvas].forEach(c=>{ c.width=vw; c.height=vh; });
     recallCanvas.width=vw; recallCanvas.height=vh; recallCtx.clearRect(0,0,recallCanvas.width,recallCanvas.height);
@@ -736,7 +778,7 @@
       }
       fctx.globalCompositeOperation='screen'; fctx.drawImage(recallCanvas,0,0); fctx.globalCompositeOperation='source-over';
 
-      // outlines (reuse buffers)
+      // outlines
       edgeCtx.clearRect(0,0,edgeCanvas.width,edgeCanvas.height);
       if (ghostEdgeOn && ghostEdgeOn.checked)   drawOutlineFrom(can.ghost,    ghostEdgeColor.value,  +ghostEdgeAlpha.value||0.8);
       if (stainEdgeOn && stainEdgeOn.checked)   drawOutlineFrom(can.stain,    stainEdgeColor.value,  +stainEdgeAlpha.value||0.7);
@@ -746,11 +788,11 @@
     }
 
     await new Promise(res=>{ const h=()=>{vid.removeEventListener('seeked',h); res();}; vid.addEventListener('seeked',h); try{ vid.currentTime=0; }catch(_){ res(); } });
+    const stream=outCanvas.captureStream(30);
     expRecorder.start(250);
     const hasVFC = typeof vid.requestVideoFrameCallback==='function';
     let vfcId=null, rafId=null;
 
-    // drive by VFC if available; else fallback to rAF (but decoupled from live UI)
     function stopDrivers(){ if(vfcId && vid.cancelVideoFrameCallback) try{vid.cancelVideoFrameCallback(vfcId);}catch(_){} if(rafId) cancelAnimationFrame(rafId); vfcId=rafId=null; }
     function loop(){
       try{
@@ -769,14 +811,13 @@
     function finalize(){ clearTimeout(safety); stopDrivers(); try{expRecorder.stop();}catch(_){} }
 
     vid.addEventListener('ended',finalize,{once:true});
-    await vid.play().catch(()=>{ /* some browsers require user gesture; still proceed */ });
+    await vid.play().catch(()=>{ });
     loop();
     await recDone;
 
     const blob=new Blob(expChunks,{type:mime}); const a=document.createElement('a'); const tag='native';
     a.download=`wind_on_wall_1x_${vw}x${vh}_${tag}_${Date.now()}.${ext}`; a.href=URL.createObjectURL(blob); a.click();
 
-    // restore sizes/state and resume live loop
     can.final.width=prevSizes.W; can.final.height=prevSizes.H;
     can.stain.width=prevSizes.sW; can.stain.height=prevSizes.sH;
     can.ghost.width=prevSizes.gW; can.ghost.height=prevSizes.gH;
