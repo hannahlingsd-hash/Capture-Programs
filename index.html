@@ -3,194 +3,124 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Wind-on-Wall — Ghosts + Stain (hi-res)</title>
-
+<title>Wind-on-Wall — Ghosts (separate) + Stain (hi-res)</title>
 <style>
-  :root{
-    --bg:#fff; --fg:#000; --mut:#333; --line:#000;
-    --colR:320px;
-    --track-fill:#111;
-    --track-bg:#cfcfcf;
-  }
-  html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font:13px/1.45 Arial, Helvetica, sans-serif}
-  body{overflow:hidden;}
-  *{box-sizing:border-box;border-radius:0}
-  button,input,select,label{font:inherit;color:var(--fg);background:#fff;margin:0}
-
-  .wrap{
-    display:grid;
-    grid-template-columns: minmax(0,1fr) var(--colR);
-    gap:16px; height:100vh; padding:12px; overflow:hidden;
-  }
-  main{position:relative;display:flex;align-items:center;justify-content:center;min-width:0}
-  .stage{
-    position:relative;
-    width:100%;
-    height:100%;
-    aspect-ratio:16/9;
-    background:#fff;
-    overflow:hidden;
-  }
-  canvas{
-    position:absolute; inset:0;
-    width:100%; height:100%;
-    object-fit:contain;
-    background:#000;
-    border:0; outline:0; box-shadow:none; display:block;
-    transform:translateZ(0.001px);
-  }
-
-  aside.panel{padding-top:4px; padding-right:14px; padding-left:4px; overflow:auto; scrollbar-width:thin}
-  aside.panel::-webkit-scrollbar{width:10px}
-  aside.panel::-webkit-scrollbar-thumb{background:#bbb}
-  aside.panel::-webkit-scrollbar-track{background:#eee}
-
-  .group{font-weight:700;margin:18px 0 6px}
-  .row{display:grid;align-items:center;gap:8px;margin:6px 0;grid-template-columns:1fr minmax(120px,1.6fr) 44px}
-  .row.compact{grid-template-columns:1fr auto 44px}
-  .row > span{text-align:right;color:#000}
-  .row label{color:var(--fg)}
-
-  .row.colorop{ grid-template-columns: 1fr auto 110px 44px !important; }
-  .row.colorop input[type="range"]{ width:110px !important; max-width:110px !important; justify-self:start; }
-
-  .btnRow{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
-  .inlineRow{display:flex;align-items:center;gap:8px;margin:6px 0}
-
-  .exportGrid{display:grid;gap:8px;margin:6px 0;grid-template-columns:1fr 1fr 1fr}
-  .exportGrid .full{grid-column:1 / -1}
-
-  .btn{appearance:none;background:#fff;color:#000;border:1px solid var(--line);padding:6px 10px;cursor:pointer}
-  .btn.secondary{background:#fff}
+  :root{--bg:#0b0e12;--fg:#e6eeff;--mut:#90a1bb;--accent:#ff5b5b}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font:14px/1.35 system-ui,Segoe UI,Roboto,Helvetica,Arial}
+  .wrap{display:grid;grid-template-columns:380px 1fr;gap:14px;height:100%}
+  aside{padding:14px 12px 16px;border-right:1px solid #1a2233;overflow:auto}
+  main{position:relative}
+  canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+  h1{font-size:16px;margin:0 0 10px}
+  fieldset{border:1px solid #1a2233;border-radius:10px;margin:10px 0;padding:10px}
+  legend{padding:0 6px;color:#9fb7e8}
+  .row{display:flex;align-items:center;gap:8px;margin:8px 0;flex-wrap:wrap}
+  .row label{flex:1;color:var(--mut)}
+  .row input[type="range"], .row select{flex:2}
+  .btn{appearance:none;border:1px solid #2a3754;background:#121826;color:#cfe1ff;border-radius:8px;padding:6px 10px;cursor:pointer}
+  .btn.secondary{background:#0e1422;border-color:#1f2b44;color:#a8b7d6}
   .btn:disabled{opacity:.5;cursor:not-allowed}
-
-  input[type="range"]{appearance:none;height:2px;outline:none;background:linear-gradient(to right,var(--track-fill) 0 var(--p,0%),var(--track-bg) var(--p,0%) 100%)}
-  input[type="range"]::-webkit-slider-thumb{appearance:none;width:10px;height:10px;background:#000;border:1px solid #000}
-  input[type="range"]::-moz-range-thumb{width:10px;height:10px;background:#000;border:1px solid #000}
-  input[type="range"]::-moz-range-track{height:2px;background:var(--track-bg)}
-  input[type="range"]::-moz-range-progress{height:2px;background:var(--track-fill)}
-
-  input[type="color"]{width:32px;height:22px;border:1px solid #000;background:#fff;padding:0}
-
-  .hud{display:none!important}
-  .rec{position:absolute;top:10px;right:10px;background:rgba(0,0,0,.6);color:#fff;padding:6px 10px;display:flex;align-items:center;gap:8px}
-  .dot{width:8px;height:8px;background:#ff5b5b}
-  .nosrc{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#888;font:12px ui-monospace;pointer-events:none}
-  .fab{display:none}
-  .small{font-size:12px;color:#333}
+  .kbd{font:12px ui-monospace;background:#121520;border:1px solid #1f2736;border-radius:6px;padding:1px 6px;color:#b8c7e8}
+  .small{font-size:12px;color:#93a6c4}
+  .hud{position:absolute;top:10px;left:10px;background:rgba(0,0,0,.45);padding:6px 8px;border-radius:8px;font:12px ui-monospace;white-space:pre}
+  .rec{position:absolute;top:10px;right:10px;background:rgba(0,0,0,.55);padding:6px 10px;border-radius:999px;font:12px ui-monospace;display:flex;align-items:center;gap:8px}
+  .dot{width:8px;height:8px;background:var(--accent);border-radius:50%;box-shadow:0 0 8px var(--accent)}
+  .warn{color:#ffb86b}
+  .ok{color:#6be77a}
+  .nosrc{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#aac; font:12px ui-monospace; pointer-events:none}
+  .fab{position:absolute;top:46px;right:10px;z-index:5;border:1px solid #2a3754;background:#121826;color:#cfe1ff;border-radius:999px;padding:6px 10px;cursor:pointer}
 </style>
 </head>
-
 <body>
 <div class="wrap">
-  <main>
-    <div class="stage">
-      <canvas id="stain"></canvas>
-      <canvas id="ghost"></canvas>
-      <canvas id="final"></canvas>
-      <div id="hud" class="hud"></div>
-      <div id="recHUD" class="rec" style="display:none;"><span class="dot"></span><span id="recTime">REC 00:00</span></div>
-      <div id="nosrc" class="nosrc" style="display:none;">load a clip or use the webcam</div>
-      <button id="replayFloat" class="fab" title="Replay (R)">↺</button>
-    </div>
-  </main>
-
-  <aside class="panel">
-    <div class="group">Source</div>
-    <div class="btnRow">
+  <aside>
+    <h1>Wind-on-Wall — Live</h1>
+    <div class="row">
       <input id="file" type="file" accept="video/*">
-    </div>
-    <div class="btnRow">
       <button id="webcam" class="btn">Webcam</button>
       <button id="play" class="btn secondary">Play/Pause</button>
-      <button id="replay" class="btn secondary">Replay</button>
     </div>
-
-    <div class="group">Temporal window</div>
-    <div class="row"><label>Δt (seconds)</label><input id="dt" type="range" min="2" max="10" step="0.5" value="6"><span id="dtV">6.0</span></div>
-    <div class="row"><label>Diff threshold</label><input id="thr" type="range" min="4" max="60" value="60"><span id="thrV">60</span></div>
-    <div class="row"><label>Grey level</label><input id="grey" type="range" min="60" max="200" value="200"><span id="greyV">200</span></div>
-    <div class="row"><label>Pre-blur (px)</label><input id="preblur" type="range" min="0" max="3" value="0"><span id="preblurV">0</span></div>
-
-    <div class="group">Ghosts</div>
-    <div class="row"><label>Ghost opacity</label><input id="gAlpha" type="range" min="0" max="1" step="0.05" value="0.75"><span id="gAlphaV">0.75</span></div>
     <div class="row">
-      <label>Blend mode</label>
-      <select id="gBlend">
-        <option value="normal" selected>Normal</option>
-        <option value="screen">Screen</option>
-        <option value="lighter">Lighter (Add)</option>
-        <option value="multiply">Multiply</option>
-        <option value="difference">Difference</option>
-      </select>
-      <span></span>
+      <button id="replay" class="btn secondary">↺ Replay</button>
+      <span class="small">Shortcut: <span class="kbd">R</span></span>
     </div>
-    <div class="row compact">
-      <label>Ghost color</label>
-      <input id="gUseColor" type="checkbox" checked style="display:none">
-      <input id="gColor" type="color" value="#000000">
-    </div>
+    <div class="row small">Or URL: <span class="kbd">?src=clip.mp4</span> (same-origin or CORS)</div>
 
-    <div class="group">Stain</div>
-    <div class="row compact"><label>Enable stain</label><input id="stainOn" type="checkbox" checked></div>
-    <div class="row"><label>Decay</label><input id="decay" type="range" min="0.90" max="0.995" step="0.001" value="0.925"><span id="decayV">0.925</span></div>
-    <div class="row"><label>Strength</label><input id="strength" type="range" min="0.1" max="1" step="0.05" value="0.35"><span id="strengthV">0.35</span></div>
-    <div class="row"><label>Expand (px)</label><input id="expand" type="range" min="0" max="8" step="1" value="0"><span id="expandV">0</span></div>
-    <div class="row compact"><label>Stain color</label><input id="sColor" type="color" value="#223b7a"></div>
+    <fieldset>
+      <legend>Temporal window</legend>
+      <div class="row"><label>Δt (seconds)</label><input id="dt" type="range" min="2" max="10" step="0.5" value="6"><span id="dtV">6.0</span></div>
+      <div class="row"><label>Diff threshold</label><input id="thr" type="range" min="4" max="60" value="18"><span id="thrV">18</span></div>
+      <div class="row"><label>Grey level</label><input id="grey" type="range" min="60" max="200" value="120"><span id="greyV">120</span></div>
+      <div class="row"><label>Pre-blur (px)</label><input id="preblur" type="range" min="0" max="3" value="0"><span id="preblurV">0</span></div>
+    </fieldset>
 
-    <div class="group">Recalls</div>
-    <div class="row compact"><label>Enable recall</label><input id="recallOn" type="checkbox"></div>
-    <div class="row"><label>Probability</label><input id="recallProb" type="range" min="0" max="1" step="0.01" value="0.05"><span id="recallProbV">0.05</span></div>
-    <div class="row"><label>Capacity</label><input id="recallCap" type="range" min="0" max="120" step="5" value="60"><span id="recallCapV">60</span></div>
-    <div class="row compact"><label>Recall color</label><input id="recallColor" type="color" value="#00e7ff"></div>
-    <div class="row"><label>Linger (s)</label><input id="recallLinger" type="range" min="0.2" max="3" step="0.1" value="0.6"><span id="recallLingerV">0.6</span></div>
-    <div class="row"><label>Span (s)</label><input id="recallSpan" type="range" min="0" max="3" step="0.1" value="0.4"><span id="recallSpanV">0.4</span></div>
-    <div class="btnRow"><button id="recallNow" class="btn">Recall now</button></div>
+    <fieldset>
+      <legend>Ghosts (motion)</legend>
+      <div class="row"><label>Ghost opacity</label><input id="gAlpha" type="range" min="0" max="1" step="0.05" value="0.7"><span id="gAlphaV">0.70</span></div>
+      <div class="row"><label>Blend mode</label>
+        <select id="gBlend">
+          <option value="normal">Normal</option>
+          <option value="screen" selected>Screen</option>
+          <option value="lighter">Lighter</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>Use custom color</label>
+        <input id="gUseColor" type="checkbox">
+        <input id="gColor" type="color" value="#ffffff">
+      </div>
+    </fieldset>
 
-    <div class="group">Linger</div>
-    <div class="row compact"><label>Enable linger</label><input id="hauntOn" type="checkbox"></div>
-    <div class="row"><label>Persistence</label><input id="hauntPersist" type="range" min="0" max="1" step="0.01" value="0.70"><span id="hauntPersistV">0.70</span></div>
-    <div class="row"><label>Reinforce radius (px)</label><input id="hauntRadius" type="range" min="10" max="60" step="1" value="30"><span id="hauntRadiusV">30</span></div>
-    <div class="row"><label>Stickiness</label><input id="hauntStick" type="range" min="0" max="2" step="0.1" value="1.0"><span id="hauntStickV">1.0</span></div>
-    <div class="row compact"><label>Linger color</label><input id="hauntColor" type="color" value="#4a5e8a"></div>
+    <fieldset>
+      <legend>Stain (residual blotches)</legend>
+      <div class="row"><label>Enable stain</label><input id="stainOn" type="checkbox" checked></div>
+      <div class="row"><label>Decay</label><input id="decay" type="range" min="0.90" max="0.995" step="0.001" value="0.970"><span id="decayV">0.970</span></div>
+      <div class="row"><label>Strength</label><input id="strength" type="range" min="0.1" max="1" step="0.05" value="0.50"><span id="strengthV">0.50</span></div>
+      <div class="row"><label>Expand (px)</label><input id="expand" type="range" min="0" max="8" step="1" value="2"><span id="expandV">2</span></div>
+      <div class="row"><label>Stain color</label><input id="sColor" type="color" value="#223b7a"></div>
+    </fieldset>
 
-    <div class="group">Drawing Filter (Outlines)</div>
-    <div class="row"><label>Threshold</label><input id="edgeThr" type="range" min="0" max="255" step="1" value="40"><span id="edgeThrV">40</span></div>
-
-    <div class="row compact"><label>Ghost outline</label><input id="ghostEdgeOn" type="checkbox"></div>
-    <div class="row colorop"><label>color / opacity</label><input id="ghostEdgeColor" type="color" value="#000000"><input id="ghostEdgeAlpha" type="range" min="0" max="1" step="0.05" value="0.75"><span id="ghostEdgeAlphaV">0.75</span></div>
-
-    <div class="row compact"><label>Stain outline</label><input id="stainEdgeOn" type="checkbox"></div>
-    <div class="row colorop"><label>color / opacity</label><input id="stainEdgeColor" type="color" value="#000000"><input id="stainEdgeAlpha" type="range" min="0" max="1" step="0.05" value="0.30"><span id="stainEdgeAlphaV">0.30</span></div>
-
-    <div class="row compact"><label>Recall outline</label><input id="recallEdgeOn" type="checkbox"></div>
-    <div class="row colorop"><label>color / opacity</label><input id="recallEdgeColor" type="color" value="#fbff00"><input id="recallEdgeAlpha" type="range" min="0" max="1" step="0.05" value="0.40"><span id="recallEdgeAlphaV">0.40</span></div>
-
-    <div class="row compact"><label>Linger outline</label><input id="lingerEdgeOn" type="checkbox"></div>
-    <div class="row colorop"><label>color / opacity</label><input id="lingerEdgeColor" type="color" value="#ff0000"><input id="lingerEdgeAlpha" type="range" min="0" max="1" step="0.05" value="0.75"><span id="lingerEdgeAlphaV">0.75</span></div>
-
-    <div class="group">Export</div>
-    <div class="row compact">
-      <label for="matchPreview">Match preview</label>
-      <input id="matchPreview" type="checkbox" checked>
-      <span></span>
-    </div>
-    <div class="exportGrid">
-      <button id="recStart" class="btn">Start Recording</button>
-      <button id="recStop" class="btn" disabled>Stop &amp; Save</button>
-      <button id="shot" class="btn secondary">Export PNG</button>
-      <button id="exportOne" class="btn full">Export 1:1 (source)</button>
-    </div>
-
-    <div class="small" id="supportNote"></div>
-    <div class="small" id="dbg">buffer: 0 | fps —</div>
+    <fieldset>
+      <legend>Export</legend>
+      <div class="row">
+        <label>Format</label>
+        <select id="format">
+          <option value="mp4">MP4 (preferred)</option>
+          <option value="webm">WebM</option>
+          <option value="auto" selected>Auto (best available)</option>
+        </select>
+      </div>
+      <div class="row">
+        <button id="recStart" class="btn">Start Recording</button>
+        <button id="recStop" class="btn" disabled>Stop & Save</button>
+      </div>
+      <div class="row">
+        <button id="shot" class="btn secondary">Export PNG</button>
+      </div>
+      <div class="row small" id="supportNote"></div>
+      <div class="row small" id="dbg">buffer: 0 | fps —</div>
+    </fieldset>
   </aside>
+
+  <main>
+    <canvas id="stain"></canvas>
+    <canvas id="ghost"></canvas>
+    <canvas id="final"></canvas>
+    <div id="hud" class="hud"></div>
+    <div id="recHUD" class="rec" style="display:none;"><span class="dot"></span><span id="recTime">REC 00:00</span></div>
+    <div id="nosrc" class="nosrc" style="display:none;">load a clip or use the webcam</div>
+    <button id="replayFloat" class="fab" title="Replay (R)">↺</button>
+  </main>
 </div>
 
 <script>
 (function(){
-  /* ---------- Elements ---------- */
-  const can = { stain:stain, ghost:ghost, final:final };
+  // ---------- Elements ----------
+  const can = {
+    stain: document.getElementById('stain'),
+    ghost: document.getElementById('ghost'),
+    final: document.getElementById('final'),
+  };
   const sctx = can.stain.getContext('2d');
   const gctx = can.ghost.getContext('2d');
   const fctx = can.final.getContext('2d');
@@ -203,8 +133,6 @@
   const recStartBtn = document.getElementById('recStart');
   const recStopBtn  = document.getElementById('recStop');
   const shotBtn = document.getElementById('shot');
-  const exportOneBtn = document.getElementById('exportOne');
-  const matchPreview = document.getElementById('matchPreview');
   const hud = document.getElementById('hud');
   const recHUD = document.getElementById('recHUD');
   const recTime = document.getElementById('recTime');
@@ -218,6 +146,7 @@
   const stainOn = document.getElementById('stainOn');
   const sColor  = document.getElementById('sColor');
   const gBlend  = document.getElementById('gBlend');
+  const formatSel = document.getElementById('format');
   const gUseColor = document.getElementById('gUseColor');
   const gColor    = document.getElementById('gColor');
 
@@ -231,10 +160,10 @@
     out.strengthV.textContent= (+el.strength.value).toFixed(2);
     out.expandV.textContent  = el.expand.value;
   }
-  [...ids.map(id=>el[id]), stainOn, sColor, gBlend, gUseColor, gColor].forEach(x=>x.addEventListener('input', sync));
+  [...ids.map(id=>el[id]), stainOn, sColor, gBlend, formatSel, gUseColor, gColor].forEach(x=>x.addEventListener('input', sync));
   sync();
 
-  /* ---------- Source ---------- */
+  // ---------- Source ----------
   const vid = document.createElement('video');
   vid.crossOrigin = "anonymous";
   vid.playsInline = true; vid.muted = true; vid.loop = true; vid.preload = "auto";
@@ -244,186 +173,113 @@
 
   let mediaStream = null;
   file.addEventListener('change', e=>{
-    const f = e.target.files[0];
-    if(!f) return;
+    const f = e.target.files[0]; if(!f) return;
     stopWebcam();
     resetState();
     vid.src = URL.createObjectURL(f);
     vid.play();
   });
   playBtn.addEventListener('click', ()=> vid.paused ? vid.play() : vid.pause());
-  webcamBtn.addEventListener('click', ()=> startWebcam().catch(e=>alert('Webcam failed: '+(e && e.message ? e.message : e))));
-
+  webcamBtn.addEventListener('click', ()=> startWebcam().catch(e=>alert('Webcam failed: '+e.message)));
   async function startWebcam(){
-    const secure = (location.protocol==='https:'||location.hostname==='localhost'||location.hostname==='127.0.0.1');
-    if(!secure) throw new Error('Camera requires HTTPS or localhost.');
-    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia) throw new Error('getUserMedia is not available in this browser.');
-
     stopWebcam();
     resetState();
-    const tries=[
-      {video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:false},
-      {video:true,audio:false}
-    ];
-    let errLast=null;
-    for(const constraints of tries){
-      try{
-        mediaStream=await navigator.mediaDevices.getUserMedia(constraints);
-        break;
-      }catch(err){
-        errLast=err;mediaStream=null;
-      }
-    }
-    if(!mediaStream){
-      if(errLast && (errLast.name==='NotAllowedError'||errLast.name==='SecurityError')) throw new Error('Camera permission blocked. Allow access in site settings.');
-      if(errLast && errLast.name==='NotFoundError') throw new Error('No camera device found.');
-      throw errLast || new Error('Unable to access camera.');
-    }
-    vid.srcObject = mediaStream;
-    await new Promise(res=>{ if(vid.readyState>=1) return res(); vid.addEventListener('loadedmetadata',res,{once:true}); });
-    try{ await vid.play(); }catch(_){ throw new Error('Autoplay failed. Click Play or allow autoplay.'); }
+    mediaStream = await navigator.mediaDevices.getUserMedia({video:true, audio:false});
+    vid.srcObject = mediaStream; await vid.play();
   }
-  function stopWebcam(){
-    if(mediaStream){
-      try{mediaStream.getTracks().forEach(t=>t.stop());}catch(_){}
-      mediaStream=null;
-    }
-    if(vid && vid.srcObject){
-      try{vid.srcObject=null;}catch(_){}
-    }
-  }
+  function stopWebcam(){ if(mediaStream){ mediaStream.getTracks().forEach(t=>t.stop()); mediaStream=null; } }
 
-  /* ---------- Sizing ---------- */
-  const proc = document.createElement('canvas'); const pctx = proc.getContext('2d',{willReadFrequently:true});
-  const maskCanvas = document.createElement('canvas'); const maskCtx = maskCanvas.getContext('2d');
-  const colCanvas = document.createElement('canvas'); const colCtx = colCanvas.getContext('2d');
-  const recallCanvas = document.createElement('canvas'); const recallCtx = recallCanvas.getContext('2d');
-  const hauntCanvas = document.createElement('canvas'); const hauntCtx = hauntCanvas.getContext('2d');
-  const tintCanvas  = document.createElement('canvas'); const tintCtx  = tintCanvas.getContext('2d');
-  const edgeCanvas  = document.createElement('canvas'); const edgeCtx  = edgeCanvas.getContext('2d', { willReadFrequently:true });
+  // ---------- HiDPI sizing ----------
+  const proc = document.createElement('canvas');
+  const pctx = proc.getContext('2d', {willReadFrequently:true});
+  const maskCanvas = document.createElement('canvas');
+  const maskCtx = maskCanvas.getContext('2d');
+  const colCanvas = document.createElement('canvas');
+  const colCtx = colCanvas.getContext('2d');
 
   function fit(){
-    const dpr = Math.max(1, window.devicePixelRatio||1);
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
     const r = can.final.getBoundingClientRect();
-    const W = Math.max(2, Math.ceil(r.width*dpr));
-    const H = Math.max(2, Math.ceil(r.height*dpr));
+    const W = Math.max(2, Math.round(r.width*dpr));
+    const H = Math.max(2, Math.round(r.height*dpr));
     for(const k in can){ can[k].width=W; can[k].height=H; }
     proc.width=W; proc.height=H;
     maskCanvas.width=W; maskCanvas.height=H;
     colCanvas.width=W; colCanvas.height=H;
-    recallCanvas.width=W; recallCanvas.height=H;
-    hauntCanvas.width=W; hauntCanvas.height=H;
-    tintCanvas.width=W; tintCanvas.height=H;
-    edgeCanvas.width=W; edgeCanvas.height=H;
-    ensureEdgeBuffers(W,H,true);
   }
-  new ResizeObserver(fit).observe(can.final); fit();
+  new ResizeObserver(fit).observe(can.final);
+  fit(); // initial size
 
-  /* ---------- Buffers ---------- */
-  const buf=[]; const MAX_SEC=14;
-  function pushFrame(img,t){
-    buf.push({t,data:new Uint8ClampedArray(img.data),w:img.width,h:img.height});
-    const cutoff=t-(MAX_SEC+2);
-    while(buf.length && buf[0].t<cutoff) buf.shift();
+  // ---------- Buffers ----------
+  const buf = []; const MAX_SEC = 14;
+  function pushFrame(img, t){
+    buf.push({t, data: new Uint8ClampedArray(img.data), w: img.width, h: img.height});
+    const cutoff = t - (MAX_SEC + 2);
+    while(buf.length && buf[0].t < cutoff) buf.shift();
   }
   function getPastFrame(delta){
-    const target=vid.currentTime-delta;
-    for(let i=buf.length-1;i>=0;i--){
-      if(buf[i].t<=target) return buf[i];
-    }
-    return buf[0]||null;
+    const target = vid.currentTime - delta;
+    for(let i=buf.length-1;i>=0;i--){ if(buf[i].t <= target) return buf[i]; }
+    return buf[0] || null;
   }
 
   function drawVideoContained(ctx, video, W, H, blurPx){
     ctx.save();
     ctx.clearRect(0,0,W,H);
-    if(blurPx>0) ctx.filter=`blur(${blurPx}px)`;
+    if(blurPx>0) ctx.filter = `blur(${blurPx}px)`;
     const vw=video.videoWidth||0, vh=video.videoHeight||0;
     if(vw && vh){
-      const s=Math.min(W/vw,H/vh);
-      const dw=Math.round(vw*s), dh=Math.round(vh*s);
-      const dx=Math.floor((W-dw)/2), dy=Math.floor((H-dh)/2);
-      ctx.drawImage(video,dx,dy,dw,dh);
+      const s = Math.min(W/vw, H/vh);
+      const dw = Math.round(vw*s), dh = Math.round(vh*s);
+      const dx = Math.floor((W-dw)/2), dy = Math.floor((H-dh)/2);
+      ctx.drawImage(video, dx,dy,dw,dh);
     }
     ctx.restore();
   }
 
-  /* ---------- Recording (Preview hi-res backbuffer) ---------- */
+  // ---------- Recording ----------
   let recorder=null, chunks=[], recStartTime=0, recTimer=null, recMime="", recExt="webm";
-  let recCanvas=null, recCtx=null, recRaf=null;
-
   function bestSupported(){
-    const mp4='video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-          webm='video/webm;codecs=vp9,opus',
-          webm2='video/webm;codecs=vp8,opus';
+    const mp4='video/mp4;codecs=avc1.42E01E,mp4a.40.2';
+    const webm='video/webm;codecs=vp9,opus';
+    const webm2='video/webm;codecs=vp8,opus';
     const canMp4 = !!(window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(mp4));
-    const canWebm= !!(window.MediaRecorder && MediaRecorder.isTypeSupported &&
-                     (MediaRecorder.isTypeSupported(webm)||MediaRecorder.isTypeSupported(webm2)));
+    const canWebm= !!(window.MediaRecorder && MediaRecorder.isTypeSupported && (MediaRecorder.isTypeSupported(webm)||MediaRecorder.isTypeSupported(webm2)));
     return {canMp4, canWebm, mp4, webm:(MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(webm)?webm:webm2)};
   }
   function refreshSupportNote(){
     const s=bestSupported();
-    const msg = s.canMp4 ? 'Auto → MP4' :
-                (s.canWebm ? 'Auto → WebM' : '<span class="warn">Recording unsupported.</span>');
+    const fmt=document.getElementById('format').value;
+    let msg='';
+    if(fmt==='mp4'){ msg = s.canMp4 ? '<span class="ok">MP4 recording supported ✓</span>' : '<span class="warn">MP4 not supported here. Use Safari/WebKit or switch to WebM.</span>'; }
+    else if(fmt==='webm'){ msg = s.canWebm ? 'WebM recording supported ✓' : '<span class="warn">WebM not supported.</span>'; }
+    else { msg = s.canMp4 ? 'Auto → MP4' : (s.canWebm ? 'Auto → WebM' : '<span class="warn">Recording unsupported.</span>'); }
     supportNote.innerHTML = msg;
   }
   refreshSupportNote();
+  document.getElementById('format').addEventListener('change', refreshSupportNote);
 
   function startRecording(){
-    const s = bestSupported();
-    const mime = s.canMp4 ? s.mp4 : (s.canWebm ? s.webm : '');
-    if (!mime){
-      alert('Recording format not supported on this browser.');
-      return;
-    }
+    const s=bestSupported(); const sel=document.getElementById('format').value;
+    let mime='';
+    if(sel==='mp4') mime = s.canMp4 ? s.mp4 : '';
+    else if(sel==='webm') mime = s.canWebm ? s.webm : '';
+    else mime = s.canMp4 ? s.mp4 : (s.canWebm ? s.webm : '');
+    if(!mime){ alert('Recording format not supported on this browser.'); return; }
 
-    let W = can.final.width|0, H = can.final.height|0;
-    if (W % 2) W--;
-    if (H % 2) H--;
-    if (W < 2 || H < 2){
-      alert('Canvas not ready.');
-      return;
-    }
-
-    recCanvas = document.createElement('canvas');
-    recCanvas.width = W;
-    recCanvas.height = H;
-    recCtx = recCanvas.getContext('2d');
-
-    const stream = recCanvas.captureStream(30);
-
-    const vbr = Math.min(25_000_000,
-                Math.max(8_000_000, Math.floor(W*H*30*0.07)));
-    chunks = [];
-    recorder = new MediaRecorder(stream, {
-      mimeType: mime,
-      videoBitsPerSecond: vbr
-    });
-
-    recMime = mime;
-    recExt  = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
-
-    recorder.ondataavailable = e => {
-      if (e.data && e.data.size) chunks.push(e.data);
-    };
-    recorder.onstop = () => {
-      if (recRaf) { cancelAnimationFrame(recRaf); recRaf = null; }
-      const blob = new Blob(chunks, { type: recMime });
+    const stream = can.final.captureStream ? can.final.captureStream(30) : can.final.mozCaptureStream(30);
+    chunks=[];
+    recorder = new MediaRecorder(stream, {mimeType:mime, videoBitsPerSecond: 8_000_000});
+    recMime=mime; recExt = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+    recorder.ondataavailable = e=>{ if(e.data && e.data.size) chunks.push(e.data); };
+    recorder.onstop = ()=>{
+      const blob = new Blob(chunks, {type: recMime});
       const a = document.createElement('a');
-      a.download = `wind_on_wall_${W}x${H}_${Date.now()}.${recExt}`;
+      a.download = `wind_on_wall_${Date.now()}.${recExt}`;
       a.href = URL.createObjectURL(blob);
       a.click();
       stopRecUI();
-      recCanvas = recCtx = null;
     };
-
-    function pump(){
-      recCtx.clearRect(0,0,W,H);
-      recCtx.drawImage(can.final, 0, 0, W, H);
-      recRaf = requestAnimationFrame(pump);
-    }
-    pump();
-
     recorder.start(250);
 
     recStartTime = performance.now();
@@ -431,845 +287,183 @@
       const t = Math.floor((performance.now()-recStartTime)/1000);
       const mm = String(Math.floor(t/60)).padStart(2,'0');
       const ss = String(t%60).padStart(2,'0');
-      recTime.textContent = `REC ${mm}:${ss} — ${W}×${H}`;
-    }, 250);
-    recHUD.style.display = 'flex';
-    recStartBtn.disabled = true;
-    recStopBtn.disabled  = false;
-
-    const sup = bestSupported();
-    supportNote.innerHTML = `${W}×${H} • ${sup.canMp4?'MP4':'WebM'} @ ${(vbr/1e6).toFixed(1)} Mbps`;
+      recTime.textContent = `REC ${mm}:${ss}`;
+    },250);
+    recHUD.style.display='flex';
+    recStartBtn.disabled=true; recStopBtn.disabled=false;
   }
-
-  function stopRecUI(){
-    clearInterval(recTimer);
-    recTimer=null;
-    recHUD.style.display='none';
-    recStartBtn.disabled=false;
-    recStopBtn.disabled=true;
-  }
-
-  function stopRecording(){
-    if (recorder && recorder.state === 'recording'){
-      try{ recorder.stop(); }catch(_){}
-    }
-    if (recRaf) {
-      cancelAnimationFrame(recRaf);
-      recRaf = null;
-    }
-  }
+  function stopRecording(){ if(recorder && recorder.state==='recording'){ recorder.stop(); } }
+  function stopRecUI(){ clearInterval(recTimer); recTimer=null; recHUD.style.display='none'; recStartBtn.disabled=false; recStopBtn.disabled=true; }
   recStartBtn.addEventListener('click', startRecording);
   recStopBtn.addEventListener('click',  stopRecording);
 
-  /* Still frame PNG from preview canvas */
   shotBtn.addEventListener('click', ()=>{
-    const a=document.createElement('a');
-    a.download='still_'+Date.now()+'.png';
-    a.href=can.final.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.download = 'still_'+Date.now()+'.png';
+    a.href = can.final.toDataURL('image/png');
     a.click();
   });
 
-  /* ---------- Replay ---------- */
+  // ---------- Replay ----------
   function resetState(){
-    buf.length=0;
+    buf.length = 0;
     sctx.clearRect(0,0,can.stain.width,can.stain.height);
     gctx.clearRect(0,0,can.ghost.width,can.ghost.height);
-    recallBank.length=0;
-    recallCtx.clearRect(0,0,recallCanvas.width,recallCanvas.height);
-    activeBurst=null;
-    hauntCtx.clearRect(0,0,hauntCanvas.width,hauntCanvas.height);
-    tintCtx.clearRect(0,0,tintCanvas.width,tintCanvas.height);
-    edgeCtx.clearRect(0,0,edgeCanvas.width,edgeCanvas.height);
   }
-
   function replay(){
     if(vid.srcObject){
       alert('Replay is for file/URL clips. Stop Webcam and load a clip to use Replay.');
       return;
     }
-    if(!vid.currentSrc && !vid.src){
-      alert('No clip loaded.');
-      return;
-    }
-    if(recorder && recorder.state==='recording'){
-      stopRecording();
-    }
+    if(!vid.currentSrc && !vid.src){ alert('No clip loaded.'); return; }
+    if(recorder && recorder.state==='recording'){ stopRecording(); }
     try{
       vid.pause();
       resetState();
-      const onSeeked=()=>{
-        vid.removeEventListener('seeked',onSeeked);
-        vid.play();
-      };
-      vid.addEventListener('seeked',onSeeked,{once:true});
-      vid.currentTime=0;
+      const onSeeked = () => { vid.removeEventListener('seeked', onSeeked); vid.play(); };
+      vid.addEventListener('seeked', onSeeked, { once:true });
+      vid.currentTime = 0;
     }catch(e){
-      const s=vid.currentSrc || vid.src;
-      if(s){
-        resetState();
-        vid.src=s;
-        vid.play();
-      }
+      const src = vid.currentSrc || vid.src;
+      if(src){ resetState(); vid.src = src; vid.play(); }
     }
   }
   replayBtn.addEventListener('click', replay);
   replayFloat.addEventListener('click', replay);
-
   document.addEventListener('keydown', (e)=>{
-    const t=e.target;
-    if(t&&(t.tagName==='INPUT'||t.tagName==='SELECT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
-    if(e.code==='KeyR'){
-      e.preventDefault();
-      replay();
-    } else if(e.code==='Space'){
-      e.preventDefault();
-      vid.paused?vid.play():vid.pause();
-    }
+    const t = e.target;
+    if(t && (t.tagName==='INPUT' || t.tagName==='SELECT' || t.tagName==='TEXTAREA' || t.isContentEditable)) return;
+    if(e.code === 'KeyR'){ e.preventDefault(); replay(); }
+    else if(e.code === 'Space'){ e.preventDefault(); vid.paused ? vid.play() : vid.pause(); }
   });
 
-  /* ---------- Recall / Memory ---------- */
-  const recallOn      = document.getElementById('recallOn');
-  const recallProb    = document.getElementById('recallProb');
-  const recallProbV   = document.getElementById('recallProbV');
-  const recallCap     = document.getElementById('recallCap');
-  const recallCapV    = document.getElementById('recallCapV');
-  const recallNowB    = document.getElementById('recallNow');
-  const recallColor   = document.getElementById('recallColor');
-  const recallLinger  = document.getElementById('recallLinger');
-  const recallLingerV = document.getElementById('recallLingerV');
-  const recallSpan    = document.getElementById('recallSpan');
-  const recallSpanV   = document.getElementById('recallSpanV');
-
-  function syncRecall(){
-    if(recallProbV)recallProbV.textContent=(+recallProb.value).toFixed(2);
-    if(recallCapV)recallCapV.textContent=recallCap.value;
-    if(recallLingerV)recallLingerV.textContent=(+recallLinger.value).toFixed(1);
-    if(recallSpanV)recallSpanV.textContent=(+recallSpan.value).toFixed(1);
-  }
-  [recallOn,recallProb,recallCap,recallColor,recallLinger,recallSpan].forEach(x=>x&&x.addEventListener('input',syncRecall));
-  syncRecall();
-
-  const recallBank=[]; let activeBurst=null;
-  function capRecallBank(max){
-    while(recallBank.length>max) recallBank.shift();
-  }
-  async function snapshotGhost(tNow, ghostCanvas, targetBank){
-    try{
-      let img;
-      if('createImageBitmap' in window){
-        img=await createImageBitmap(ghostCanvas);
-      } else {
-        const c=document.createElement('canvas');
-        c.width=ghostCanvas.width;
-        c.height=ghostCanvas.height;
-        c.getContext('2d').drawImage(ghostCanvas,0,0);
-        img=c;
-      }
-      targetBank.push({img,t:tNow});
-      capRecallBank((+recallCap.value|0)||40);
-    }catch(_){}
-  }
-  function startRandomBurstFromBank(bank){
-    if(!bank.length) return null;
-    const span=Math.max(0,+recallSpan.value||0);
-    const r=(Math.random()*bank.length)|0;
-    const t0=bank[r].t, t1=t0+span;
-    const frames=bank.filter(f=>f.t>=t0 && f.t<=t1).map(f=>f.img);
-    return {frames:frames.length?frames:[bank[r].img],i:0};
-  }
-  if(recallNowB){
-    recallNowB.addEventListener('click', ()=>{
-      activeBurst = startRandomBurstFromBank(recallBank) || activeBurst;
-    });
+  // ---------- Helpers ----------
+  function hexToRgb(hex){
+    const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return m ? [parseInt(m[1],16), parseInt(m[2],16), parseInt(m[3],16)] : [255,255,255];
   }
 
-  function drawTinted(dstCtx,src,color){
-    dstCtx.globalCompositeOperation='source-over';
-    dstCtx.drawImage(src,0,0);
-    dstCtx.globalCompositeOperation='source-in';
-    dstCtx.fillStyle=color||'#00e7ff';
-    dstCtx.fillRect(0,0,recallCanvas.width,recallCanvas.height);
-    dstCtx.globalCompositeOperation='source-over';
-  }
+  // ---------- Main loop ----------
+  let lastT=0, fpsEMA=0;
+  requestAnimationFrame(function tick(now){
+    requestAnimationFrame(tick);
 
-  /* ---------- Linger / Haunt ---------- */
-  const hauntOn      = document.getElementById('hauntOn');
-  const hauntPersist = document.getElementById('hauntPersist');
-  const hauntRadius  = document.getElementById('hauntRadius');
-  const hauntStick   = document.getElementById('hauntStick');
-  const hauntColor   = document.getElementById('hauntColor');
-  const hauntPersistV= document.getElementById('hauntPersistV');
-  const hauntRadiusV = document.getElementById('hauntRadiusV');
-  const hauntStickV  = document.getElementById('hauntStickV');
+    const W = can.final.width, H = can.final.height;
 
-  function syncHaunt(){
-    if(hauntPersistV) hauntPersistV.textContent = (+hauntPersist.value).toFixed(2);
-    if(hauntRadiusV)  hauntRadiusV.textContent  = hauntRadius.value;
-    if(hauntStickV)   hauntStickV.textContent   = (+hauntStick.value).toFixed(1);
-  }
-  [hauntOn,hauntPersist,hauntRadius,hauntStick,hauntColor].forEach(x=>x&&x.addEventListener('input',syncHaunt));
-  syncHaunt();
-
-  /* ---------- Drawing Filter (Outlines) ---------- */
-  const edgeThr      = document.getElementById('edgeThr');
-  const edgeThrV     = document.getElementById('edgeThrV');
-
-  const ghostEdgeOn   = document.getElementById('ghostEdgeOn');
-  const ghostEdgeColor= document.getElementById('ghostEdgeColor');
-  const ghostEdgeAlpha= document.getElementById('ghostEdgeAlpha');
-  const ghostEdgeAlphaV=document.getElementById('ghostEdgeAlphaV');
-
-  const stainEdgeOn   = document.getElementById('stainEdgeOn');
-  const stainEdgeColor= document.getElementById('stainEdgeColor');
-  const stainEdgeAlpha= document.getElementById('stainEdgeAlpha');
-  const stainEdgeAlphaV=document.getElementById('stainEdgeAlphaV');
-
-  const recallEdgeOn   = document.getElementById('recallEdgeOn');
-  const recallEdgeColor= document.getElementById('recallEdgeColor');
-  const recallEdgeAlpha= document.getElementById('recallEdgeAlpha');
-  const recallEdgeAlphaV=document.getElementById('recallEdgeAlphaV');
-
-  const lingerEdgeOn   = document.getElementById('lingerEdgeOn');
-  const lingerEdgeColor= document.getElementById('lingerEdgeColor');
-  const lingerEdgeAlpha= document.getElementById('lingerEdgeAlpha');
-  const lingerEdgeAlphaV=document.getElementById('lingerEdgeAlphaV');
-
-  function syncEdges(){
-    if(edgeThrV) edgeThrV.textContent = edgeThr.value;
-    ghostEdgeAlphaV.textContent = (+ghostEdgeAlpha.value).toFixed(2);
-    stainEdgeAlphaV.textContent = (+stainEdgeAlpha.value).toFixed(2);
-    recallEdgeAlphaV.textContent= (+recallEdgeAlpha.value).toFixed(2);
-    lingerEdgeAlphaV.textContent= (+lingerEdgeAlpha.value).toFixed(2);
-  }
-  [
-    edgeThr,
-    ghostEdgeOn,ghostEdgeColor,ghostEdgeAlpha,
-    stainEdgeOn,stainEdgeColor,stainEdgeAlpha,
-    recallEdgeOn,recallEdgeColor,recallEdgeAlpha,
-    lingerEdgeOn,lingerEdgeColor,lingerEdgeAlpha
-  ].forEach(x=>x&&x.addEventListener('input',syncEdges));
-  syncEdges();
-
-  let edgeL=null, edgeE=null, edgeImg=null, edgeOff=null, offCtx=null, lastW=0, lastH=0;
-  function ensureEdgeBuffers(W,H,force){
-    if(force || W!==lastW || H!==lastH){
-      lastW=W; lastH=H;
-      edgeL = new Uint8ClampedArray(W*H);
-      edgeE = new Uint8ClampedArray(W*H);
-      edgeImg = new ImageData(W,H);
-      edgeOff = document.createElement('canvas');
-      edgeOff.width=W; edgeOff.height=H;
-      offCtx = edgeOff.getContext('2d');
-    }
-  }
-  function rgbaFrom(hex){
-    const m=/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex||'#000000');
-    return [
-      parseInt(m[1]||'0',16),
-      parseInt(m[2]||'0',16),
-      parseInt(m[3]||'0',16)
-    ];
-  }
-  function drawOutlineFrom(srcCanvas, colorHex, alpha01, W, H){
-    if(!W||!H) return;
-    ensureEdgeBuffers(W,H);
-    const sctx2 = srcCanvas.getContext('2d');
-    const src  = sctx2.getImageData(0,0,W,H).data;
-
-    for(let i=0,j=0;i<src.length;i+=4,++j){
-      const lum = src[i]*0.2126 + src[i+1]*0.7152 + src[i+2]*0.0722;
-      const a   = src[i+3];
-      edgeL[j] = Math.max(lum, a);
-    }
-    const TH=(+edgeThr.value|0)||40,
-          TL=Math.max(0,(TH>>1));
-    for(let y=1;y<H-1;y++){
-      let idx=y*W+1;
-      for(let x=1;x<W-1;x++,idx++){
-        const a=edgeL[idx-W-1], b=edgeL[idx-W], c=edgeL[idx-W+1];
-        const d0=edgeL[idx-1],             f=edgeL[idx+1];
-        const g=edgeL[idx+W-1], h=edgeL[idx+W], i=edgeL[idx+W+1];
-        const gx = -a -2*b -c + g +2*h + i;
-        const gy = -a -2*d0 -g + c +2*f + i;
-        const mag = Math.abs(gx)+Math.abs(gy);
-        let aa;
-        if(mag>=TH) aa=255;
-        else if(mag<=TL) aa=0;
-        else aa=Math.round((mag-TL)/(TH-TL)*255);
-        edgeE[idx]=aa;
-      }
-    }
-    for(let i=0,j=0;i<src.length;i+=4,++j){
-      edgeE[j] = Math.round(edgeE[j]*(src[i+3]/255));
-    }
-
-    const aScale=Math.max(0,Math.min(1,alpha01||1));
-    const md=edgeImg.data;
-    for(let j=0,p=0;j<edgeE.length;j++,p+=4){
-      const a=edgeE[j];
-      md[p]=255; md[p+1]=255; md[p+2]=255;
-      md[p+3]=Math.min(255, Math.round(a*aScale));
-    }
-    offCtx.globalCompositeOperation='copy';
-    offCtx.putImageData(edgeImg,0,0);
-
-    const [r,g,b]=rgbaFrom(colorHex);
-    offCtx.globalCompositeOperation='source-in';
-    offCtx.fillStyle=`rgb(${r},${g},${b})`;
-    offCtx.fillRect(0,0,W,H);
-
-    edgeCtx.globalCompositeOperation='source-over';
-    edgeCtx.drawImage(edgeOff,0,0);
-  }
-
-  /* ---------- Core frame render logic ---------- */
-  function renderCompositeFrame(W,H,tNow,scalePx,stateBag){
-    const {
-      localBuf,
-      localRecallBank,
-      localActiveBurst,
-      setActiveBurst,
-      currRecallCtx,
-      currRecallCanvas,
-      currHauntCtx,
-      currHauntCanvas,
-      currTintCtx,
-      currTintCanvas,
-      currEdgeCtx,
-      currEdgeCanvas,
-      forceSnapshotGhost
-    } = stateBag;
-
-    const grey=+el.grey.value;
+    // base
+    const grey = +el.grey.value;
     fctx.clearRect(0,0,W,H);
-    fctx.fillStyle=`rgb(${grey},${grey},${grey})`;
+    fctx.fillStyle = `rgb(${grey},${grey},${grey})`;
     fctx.fillRect(0,0,W,H);
 
-    const blurPx = (+el.preblur.value||0)*scalePx;
-    drawVideoContained(pctx,vid,W,H,blurPx);
-
-    const curr=pctx.getImageData(0,0,W,H);
-
-    localBuf.push({t:tNow,data:new Uint8ClampedArray(curr.data),w:W,h:H});
-    const cutoff=tNow-(MAX_SEC+2);
-    while(localBuf.length && localBuf[0].t<cutoff) localBuf.shift();
-
-    const deltaT=+el.dt.value;
-    const target=tNow-deltaT;
-    let past=null;
-    for(let i=localBuf.length-1;i>=0;i--){
-      if(localBuf[i].t<=target){ past=localBuf[i]; break; }
+    if(vid.readyState < 2){
+      nosrc.style.display = 'block';
+      return;
+    } else {
+      nosrc.style.display = 'none';
     }
-    if(!past && localBuf.length){ past=localBuf[0]; }
 
-    const thr=+el.thr.value;
+    // 1) current frame → analysis
+    drawVideoContained(pctx, vid, W, H, +el.preblur.value);
+    const curr = pctx.getImageData(0,0,W,H);
+    pushFrame(curr, vid.currentTime);
+
+    // 2) past frame
+    const past = getPastFrame(+el.dt.value);
+    if(!past){ return; }
+
+    // 3) motion mask + ghosts
+    const c = curr.data, p = past.data;
+    const ghostImg = gctx.createImageData(W,H);
+    const gd = ghostImg.data;
+    const thr = +el.thr.value;
+    const mask = new Uint8ClampedArray(W*H);
     let changedCount=0;
-    if(past){
-      const c=curr.data;
-      const p=past.data;
-      const ghostImg=gctx.createImageData(W,H);
-      const gd=ghostImg.data;
-      const mask=new Uint8ClampedArray(W*H);
 
-      for(let i=0,j=0;i<c.length;i+=4,j++){
-        const r=c[i], g=c[i+1], b=c[i+2];
-        const pr=p[i], pg=p[i+1], pb=p[i+2];
-        const lc=r*0.2126+g*0.7152+b*0.0722;
-        const lp=pr*0.2126+pg*0.7152+pb*0.0722;
-        const d=Math.abs(lc-lp);
-        if(d>thr){
-          changedCount++;
-          mask[j]=255;
-          if(gUseColor.checked){
-            const aVal=Math.max(40,Math.min(255,(d-thr)*8));
-            const m=/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(gColor.value);
-            const cr=m?parseInt(m[1],16):255;
-            const cg=m?parseInt(m[2],16):255;
-            const cb=m?parseInt(m[3],16):255;
-            gd[i]=cr; gd[i+1]=cg; gd[i+2]=cb; gd[i+3]=aVal;
-          } else {
-            gd[i]=(r+(255-pr))*0.5;
-            gd[i+1]=(g+(255-pg))*0.5;
-            gd[i+2]=(b+(255-pb))*0.5;
-            gd[i+3]=255;
-          }
+    for(let i=0,j=0;i<c.length;i+=4,j++){
+      const r=c[i], g=c[i+1], b=c[i+2];
+      const pr=p[i], pg=p[i+1], pb=p[i+2];
+      const lc = r*0.2126 + g*0.7152 + b*0.0722;
+      const lp = pr*0.2126 + pg*0.7152 + pb*0.0722;
+      const d = Math.abs(lc - lp);
+
+      if(d > thr){
+        changedCount++; mask[j]=255;
+
+        if (gUseColor.checked) {
+          const [cr,cg,cb] = hexToRgb(gColor.value);
+          const a = Math.max(40, Math.min(255, (d - thr) * 8)); // stronger change → more alpha
+          gd[i]=cr; gd[i+1]=cg; gd[i+2]=cb; gd[i+3]=a;
         } else {
-          gd[i]=gd[i+1]=gd[i+2]=0;
-          gd[i+3]=0;
+          // AE-style mix of current & inverted past
+          gd[i]   = (r + (255 - pr)) * 0.5;
+          gd[i+1] = (g + (255 - pg)) * 0.5;
+          gd[i+2] = (b + (255 - pb)) * 0.5;
+          gd[i+3] = 255;
         }
-      }
-      gctx.putImageData(ghostImg,0,0);
-
-      if(stainOn.checked){
-        const decay=+el.decay.value;
-        sctx.globalCompositeOperation='destination-out';
-        sctx.fillStyle=`rgba(0,0,0,${1-decay})`;
-        sctx.fillRect(0,0,W,H);
-
-        sctx.globalCompositeOperation='source-over';
-
-        const mImg=maskCtx.createImageData(W,H);
-        const mdat=mImg.data;
-        for(let j=0,k=0;j<mask.length;j++,k+=4){
-          const v=mask[j];
-          mdat[k]=mdat[k+1]=mdat[k+2]=v;
-          mdat[k+3]=v;
-        }
-        maskCtx.putImageData(mImg,0,0);
-
-        colCtx.clearRect(0,0,W,H);
-        const expandPx=(+el.expand.value||0)*scalePx;
-        if(expandPx>0){
-          colCtx.filter=`blur(${expandPx}px)`;
-        }
-        colCtx.drawImage(maskCanvas,0,0);
-        colCtx.filter='none';
-
-        colCtx.globalCompositeOperation='source-in';
-        colCtx.fillStyle=sColor.value;
-        colCtx.globalAlpha=+el.strength.value;
-        colCtx.fillRect(0,0,W,H);
-
-        colCtx.globalCompositeOperation='source-over';
-        colCtx.globalAlpha=1;
-        sctx.drawImage(colCanvas,0,0);
+      } else {
+        gd[i]=gd[i+1]=gd[i+2]=0; gd[i+3]=0;
       }
     }
+    gctx.putImageData(ghostImg,0,0);
 
+    // 4) stain accumulation
+    if(stainOn.checked){
+      const decay = +el.decay.value;
+      sctx.globalCompositeOperation='destination-out';
+      sctx.fillStyle = `rgba(0,0,0,${1-decay})`;
+      sctx.fillRect(0,0,W,H);
+      sctx.globalCompositeOperation='source-over';
+
+      const mImg = maskCtx.createImageData(W,H);
+      const mdat = mImg.data;
+      for(let j=0,k=0;j<mask.length;j++,k+=4){
+        const v = mask[j]; mdat[k]=mdat[k+1]=mdat[k+2]=v; mdat[k+3]=v;
+      }
+      maskCtx.putImageData(mImg,0,0);
+
+      colCtx.clearRect(0,0,W,H);
+      const expand = +el.expand.value;
+      if(expand>0){ colCtx.filter = `blur(${expand}px)`; }
+      colCtx.drawImage(maskCanvas,0,0);
+      colCtx.filter='none';
+      colCtx.globalCompositeOperation='source-in';
+      colCtx.fillStyle = sColor.value;
+      colCtx.globalAlpha = +el.strength.value;
+      colCtx.fillRect(0,0,W,H);
+      colCtx.globalCompositeOperation='source-over';
+      colCtx.globalAlpha = 1;
+      sctx.drawImage(colCanvas,0,0);
+    }
+
+    // 5) compose: base grey → stain (multiply) → ghosts
     if(stainOn.checked){
       fctx.globalCompositeOperation='multiply';
       fctx.drawImage(can.stain,0,0);
       fctx.globalCompositeOperation='source-over';
     }
-
-    fctx.globalAlpha=+el.gAlpha.value;
-    fctx.globalCompositeOperation=gBlend.value;
+    fctx.globalAlpha = +el.gAlpha.value;
+    fctx.globalCompositeOperation = gBlend.value;
     fctx.drawImage(can.ghost,0,0);
-    fctx.globalAlpha=1;
+    fctx.globalAlpha = 1;
     fctx.globalCompositeOperation='source-over';
 
-    if (changedCount>0 && forceSnapshotGhost){
-      forceSnapshotGhost(tNow);
-    }
-
-    const lingerS=Math.max(0.2,+recallLinger.value||1.2);
-    const fade = 1-Math.exp(-(1/30)/(lingerS));
-    currRecallCtx.globalCompositeOperation='destination-out';
-    currRecallCtx.fillStyle=`rgba(0,0,0,${fade})`;
-    currRecallCtx.fillRect(0,0,currRecallCanvas.width,currRecallCanvas.height);
-    currRecallCtx.globalCompositeOperation='source-over';
-
-    if(recallOn && recallOn.checked){
-      const prob=+recallProb.value||0;
-      if(Math.random()<prob && !localActiveBurst.value){
-        localActiveBurst.value = (function(){
-          if(!localRecallBank.length) return null;
-          const span=Math.max(0,+recallSpan.value||0);
-          const r=(Math.random()*localRecallBank.length)|0;
-          const t0=localRecallBank[r].t, t1=t0+span;
-          const frames=localRecallBank.filter(f=>f.t>=t0 && f.t<=t1).map(f=>f.img);
-          return {frames:frames.length?frames:[localRecallBank[r].img],i:0};
-        })() || localActiveBurst.value;
-      }
-    }
-
-    if(localActiveBurst.value && localActiveBurst.value.frames && localActiveBurst.value.frames.length){
-      const color=(recallColor && recallColor.value) ? recallColor.value : '#00e7ff';
-      const frm = localActiveBurst.value.frames[ localActiveBurst.value.i ];
-      if(frm){
-        currRecallCtx.globalCompositeOperation='source-over';
-        currRecallCtx.drawImage(frm,0,0);
-        currRecallCtx.globalCompositeOperation='source-in';
-        currRecallCtx.fillStyle=color;
-        currRecallCtx.fillRect(0,0,currRecallCanvas.width,currRecallCanvas.height);
-        currRecallCtx.globalCompositeOperation='source-over';
-      }
-      localActiveBurst.value.i++;
-      if(localActiveBurst.value.i>=localActiveBurst.value.frames.length){
-        localActiveBurst.value=null;
-      }
-    }
-
-    fctx.globalCompositeOperation='screen';
-    fctx.drawImage(currRecallCanvas,0,0);
-    fctx.globalCompositeOperation='source-over';
-
-    if(hauntOn && hauntOn.checked){
-      const p     = Math.max(0, Math.min(1, +hauntPersist.value || 0.85));
-      const stick = +hauntStick.value || 1.3;
-      const tint  = (hauntColor && hauntColor.value) ? hauntColor.value : '#4a5e8a';
-
-      const decayOut = Math.max(0.001, 0.06 * (1 - p));
-      currHauntCtx.globalCompositeOperation='destination-out';
-      currHauntCtx.fillStyle=`rgba(0,0,0,${decayOut})`;
-      currHauntCtx.fillRect(0,0,currHauntCanvas.width,currHauntCanvas.height);
-
-      currHauntCtx.globalCompositeOperation='lighter';
-      currHauntCtx.globalAlpha = Math.min(1, 0.55 * stick);
-      currHauntCtx.drawImage(currRecallCanvas,0,0);
-      currHauntCtx.globalAlpha = 1;
-
-      currTintCtx.clearRect(0,0,currTintCanvas.width,currTintCanvas.height);
-      currTintCtx.globalCompositeOperation='copy';
-      currTintCtx.drawImage(currHauntCanvas,0,0);
-      currTintCtx.globalCompositeOperation='source-in';
-      currTintCtx.fillStyle = tint;
-      currTintCtx.fillRect(0,0,currTintCanvas.width,currTintCanvas.height);
-
-      fctx.globalCompositeOperation = 'screen';
-      fctx.globalAlpha = 0.9;
-      fctx.drawImage(currTintCanvas,0,0);
-      fctx.globalAlpha = 1;
-      fctx.globalCompositeOperation = 'source-over';
-    }
-
-    currEdgeCtx.clearRect(0,0,currEdgeCanvas.width,currEdgeCanvas.height);
-
-    if (ghostEdgeOn && ghostEdgeOn.checked){
-      drawOutlineFrom(can.ghost, ghostEdgeColor.value, +ghostEdgeAlpha.value||0.8, W,H);
-    }
-    if (stainEdgeOn && stainEdgeOn.checked){
-      drawOutlineFrom(can.stain, stainEdgeColor.value, +stainEdgeAlpha.value||0.7, W,H);
-    }
-    if (recallEdgeOn && recallEdgeOn.checked){
-      drawOutlineFrom(currRecallCanvas, recallEdgeColor.value, +recallEdgeAlpha.value||0.7, W,H);
-    }
-    if (lingerEdgeOn && lingerEdgeOn.checked){
-      drawOutlineFrom(currHauntCanvas, lingerEdgeColor.value, +lingerEdgeAlpha.value||0.8, W,H);
-    }
-
-    fctx.globalCompositeOperation='source-over';
-    fctx.drawImage(currEdgeCanvas,0,0);
-  }
-
-  /* ---------- Live preview main loop ---------- */
-  let lastT=performance.now(), fpsEMA=0;
-  let suspendLive=false;
-
-  requestAnimationFrame(function tick(now){
-    requestAnimationFrame(tick);
-    if(suspendLive) return;
-
-    const W=can.final.width, H=can.final.height;
-    if(vid.readyState<2){
-      nosrc.style.display='block';
-    } else {
-      nosrc.style.display='none';
-    }
-
-    const liveStateBag = {
-      localBuf: buf,
-      localRecallBank: recallBank,
-      localActiveBurst: { value: activeBurst },
-      setActiveBurst: v=>{ activeBurst=v; },
-      currRecallCtx: recallCtx,
-      currRecallCanvas: recallCanvas,
-      currHauntCtx: hauntCtx,
-      currHauntCanvas: hauntCanvas,
-      currTintCtx: tintCtx,
-      currTintCanvas: tintCanvas,
-      currEdgeCtx: edgeCtx,
-      currEdgeCanvas: edgeCanvas,
-      forceSnapshotGhost: (tNow)=>{
-        snapshotGhost(tNow, can.ghost, recallBank);
-      }
-    };
-
-    renderCompositeFrame(
-      W,H,
-      vid.currentTime||0,
-      1,
-      liveStateBag
-    );
-
-    const dt=now-lastT;
-    lastT=now;
-    const inst=dt>0?1000/dt:0;
-    fpsEMA=fpsEMA?fpsEMA*0.9+inst*0.1:inst;
-    const s=bestSupported();
-    dbg.textContent=`buffer: ${buf.length} | fps ~ ${fpsEMA.toFixed(1)} | support: ${s.canMp4?'MP4✓':'MP4×'}/${s.canWebm?'WebM✓':'WebM×'}`;
-  });
-
-  vid.addEventListener('loadeddata', ()=>{
-    vid.play().catch(()=>{});
-  });
-
-  /* ---------- helpers for new export ---------- */
-
-  // match preview sharpness but lock AR to source
-  function pickExportDimsGoalB(prevSizes, vid) {
-    const ar = (vid.videoWidth || 1) / (vid.videoHeight || 1);
-
-    let w = prevSizes.W | 0;
-    let h = prevSizes.H | 0;
-
-    const previewAR = w / h;
-    if (Math.abs(previewAR - ar) > 0.001) {
-      if (previewAR > ar) {
-        // preview wider → trim width
-        w = Math.round(h * ar);
-      } else {
-        // preview taller → trim height
-        h = Math.round(w / ar);
-      }
-    }
-
-    if (w % 2) w -= 1;
-    if (h % 2) h -= 1;
-
-    return { W: w, H: h, scalePx: 1 };
-  }
-
-  function resizeAllWorkingBuffers(W, H) {
-    can.final.width  = W; can.final.height  = H;
-    can.stain.width  = W; can.stain.height  = H;
-    can.ghost.width  = W; can.ghost.height  = H;
-    proc.width       = W; proc.height       = H;
-    maskCanvas.width = W; maskCanvas.height = H;
-    colCanvas.width  = W; colCanvas.height  = H;
-    recallCanvas.width = W; recallCanvas.height = H;
-    hauntCanvas.width  = W; hauntCanvas.height  = H;
-    tintCanvas.width   = W; tintCanvas.height   = H;
-    edgeCanvas.width   = W; edgeCanvas.height   = H;
-    ensureEdgeBuffers(W, H, true);
-
-    // reset accumulators so export starts clean at t=0
-    buf.length = 0;
-    sctx.clearRect(0,0,W,H);
-    gctx.clearRect(0,0,W,H);
-    recallBank.length = 0;
-    recallCtx.clearRect(0,0,W,H);
-    activeBurst = null;
-    hauntCtx.clearRect(0,0,W,H);
-    tintCtx.clearRect(0,0,W,H);
-    edgeCtx.clearRect(0,0,W,H);
-  }
-
-  /* ---------- Deterministic 1:1-ish Export (Goal B look, AR-locked) ---------- */
-  exportOneBtn.addEventListener('click', exportSourceOnce);
-
-  async function exportSourceOnce(){
-    if(vid.srcObject){
-      alert('1:1 export is for file/URL clips, not webcam.');
-      return;
-    }
-    if(!(vid.currentSrc || vid.src)){
-      alert('Load a clip first.');
-      return;
-    }
-    if(vid.readyState<1){
-      await new Promise(res=>vid.addEventListener('loadedmetadata',res,{once:true}));
-    }
-    const vW = vid.videoWidth|0;
-    const vH = vid.videoHeight|0;
-    if(!vW || !vH){
-      alert('Video metadata unavailable.');
-      return;
-    }
+    // HUD
+    const dt = now - lastT; lastT = now;
+    const inst = dt>0 ? 1000/dt : 0; fpsEMA = fpsEMA? fpsEMA*0.9 + inst*0.1 : inst;
+    const pct = 100*(changedCount/(W*H));
+    hud.textContent = `Δt = ${(+el.dt.value).toFixed(1)} s
+thr = ${el.thr.value}, pre-blur = ${el.preblur.value}, grey = ${el.grey.value}
+ghost: ${gBlend.value}, α=${(+el.gAlpha.value).toFixed(2)}${gUseColor.checked?`, color=${gColor.value}`:''}
+stain: decay=${(+el.decay.value).toFixed(3)}, expand=${el.expand.value}, strength=${(+el.strength.value).toFixed(2)}
+changed = ${pct.toFixed(1)}%`;
 
     const s = bestSupported();
-    let mime='',ext='webm';
-    if(s.canMp4){ mime=s.mp4; ext='mp4'; }
-    else if(s.canWebm){ mime=s.webm; ext='webm'; }
-    else {
-      alert('Export not supported on this browser. Try Safari (MP4) or Chrome/Firefox (WebM).');
-      return;
-    }
-
-    const prevSuspend = suspendLive;
-    suspendLive = true;
-
-    exportOneBtn.disabled=true;
-    recStartBtn.disabled=true;
-
-    const prevSizes = {
-      W: can.final.width,  H: can.final.height,
-      sW: can.stain.width, sH: can.stain.height,
-      gW: can.ghost.width, gH: can.ghost.height,
-      pW: proc.width,      pH: proc.height,
-      mW: maskCanvas.width,mH: maskCanvas.height,
-      cW: colCanvas.width, cH: colCanvas.height,
-      rW: recallCanvas.width, rH: recallCanvas.height,
-      hW: hauntCanvas.width,  hH: hauntCanvas.height,
-      tW: tintCanvas.width,   tH: tintCanvas.height,
-      eW: edgeCanvas.width,   eH: edgeCanvas.height
-    };
-
-    // choose export dims based on preview resolution but source aspect ratio
-    const { W: outW, H: outH, scalePx } = pickExportDimsGoalB(prevSizes, vid);
-
-    resizeAllWorkingBuffers(outW, outH);
-
-    const outCanvas = document.createElement('canvas');
-    outCanvas.width  = outW;
-    outCanvas.height = outH;
-    const octx = outCanvas.getContext('2d');
-
-    const fps = 30;
-    const vbr = Math.min(
-      25_000_000,
-      Math.max(8_000_000, Math.floor(outW*outH*fps*0.07))
-    );
-
-    const stream = outCanvas.captureStream(fps);
-    const expChunks = [];
-    const expRecorder = new MediaRecorder(stream,{
-      mimeType: mime,
-      videoBitsPerSecond: vbr
-    });
-
-    const recDone = new Promise(resolve=>{
-      expRecorder.ondataavailable = e=>{
-        if(e.data && e.data.size) expChunks.push(e.data);
-      };
-      expRecorder.onstop = resolve;
-    });
-
-    const duration = isFinite(vid.duration) ? vid.duration : 60;
-    const frameDt  = 1/fps;
-    let tCursor    = 0;
-    let stopped    = false;
-
-    const exportBuf = [];
-    const exportRecallBank = [];
-    const exportActiveBurstRef = { value:null };
-
-    function seekToTime(t){
-      return new Promise(res=>{
-        function onSeek(){
-          vid.removeEventListener('seeked',onSeek);
-          res();
-        }
-        vid.addEventListener('seeked',onSeek);
-        try{
-          vid.currentTime = Math.min(duration, t);
-        }catch(_){
-          vid.removeEventListener('seeked',onSeek);
-          res();
-        }
-      });
-    }
-
-    function makeExportStateBag(){
-      return {
-        localBuf: exportBuf,
-        localRecallBank: exportRecallBank,
-        localActiveBurst: exportActiveBurstRef,
-        setActiveBurst: v=>{ exportActiveBurstRef.value=v; },
-        currRecallCtx: recallCtx,
-        currRecallCanvas: recallCanvas,
-        currHauntCtx: hauntCtx,
-        currHauntCanvas: hauntCanvas,
-        currTintCtx: tintCtx,
-        currTintCanvas: tintCanvas,
-        currEdgeCtx: edgeCtx,
-        currEdgeCanvas: edgeCanvas,
-        forceSnapshotGhost: async (tNow)=>{
-          try{
-            let img;
-            if('createImageBitmap' in window){
-              img = await createImageBitmap(can.ghost);
-            } else {
-              const c=document.createElement('canvas');
-              c.width=can.ghost.width;
-              c.height=can.ghost.height;
-              c.getContext('2d').drawImage(can.ghost,0,0);
-              img=c;
-            }
-            exportRecallBank.push({img,t:tNow});
-            const cap = (+recallCap.value|0)||40;
-            while(exportRecallBank.length>cap) exportRecallBank.shift();
-          }catch(_){}
-        }
-      };
-    }
-
-    async function renderFrameAtTime(tNow){
-      renderCompositeFrame(
-        outW, outH,
-        tNow,
-        scalePx,
-        makeExportStateBag()
-      );
-
-      octx.clearRect(0,0,outW,outH);
-      octx.drawImage(can.final,0,0,outW,outH);
-    }
-
-    function finalizeExport(){
-      if(stopped) return;
-      stopped = true;
-      try{ expRecorder.stop(); }catch(_){}
-    }
-
-    recDone.then(()=>{
-      const blob=new Blob(expChunks,{type:mime});
-      const a=document.createElement('a');
-      a.download=`wind_on_wall_previewQual_ARlocked_${outW}x${outH}_${Date.now()}.${ext}`;
-      a.href=URL.createObjectURL(blob);
-      a.click();
-
-      // restore preview buffers
-      can.final.width  = prevSizes.W; can.final.height  = prevSizes.H;
-      can.stain.width  = prevSizes.sW; can.stain.height = prevSizes.sH;
-      can.ghost.width  = prevSizes.gW; can.ghost.height = prevSizes.gH;
-      proc.width       = prevSizes.pW; proc.height      = prevSizes.pH;
-      maskCanvas.width = prevSizes.mW; maskCanvas.height= prevSizes.mH;
-      colCanvas.width  = prevSizes.cW; colCanvas.height = prevSizes.cH;
-      recallCanvas.width = prevSizes.rW; recallCanvas.height = prevSizes.rH;
-      hauntCanvas.width  = prevSizes.hW; hauntCanvas.height  = prevSizes.hH;
-      tintCanvas.width   = prevSizes.tW; tintCanvas.height   = prevSizes.tH;
-      edgeCanvas.width   = prevSizes.eW; edgeCanvas.height   = prevSizes.eH;
-      ensureEdgeBuffers(can.final.width, can.final.height, true);
-
-      suspendLive = prevSuspend;
-      exportOneBtn.disabled=false;
-      recStartBtn.disabled=false;
-    });
-
-    try{ vid.pause(); }catch(_){}
-    vid.loop=false;
-    vid.playbackRate=1;
-
-    expRecorder.start(250);
-
-    async function stepLoop(){
-      if(stopped) return;
-      if(tCursor > duration + 0.0001){
-        finalizeExport();
-        return;
-      }
-
-      await seekToTime(tCursor);
-      await renderFrameAtTime(tCursor);
-
-      tCursor += frameDt;
-      setTimeout(stepLoop,0);
-    }
-    stepLoop();
-
-    const safetyMs = duration*1000 + 15000;
-    setTimeout(()=>{ finalizeExport(); }, safetyMs);
-  }
-
-})();
-</script>
-
-<!-- Slider fill % helper -->
-<script>
-(function(){
-  function paint(r){
-    var min=r.min?+r.min:0,
-        max=r.max?+r.max:100,
-        val=isNaN(+r.value)?min:+r.value,
-        p=((val-min)/(max-min))*100;
-    r.style.setProperty('--p', p+'%');
-  }
-  var ranges=document.querySelectorAll('input[type="range"]');
-  ranges.forEach(function(r){
-    paint(r);
-    r.addEventListener('input', function(){ paint(r); });
+    dbg.textContent = `buffer: ${buf.length} | fps ~ ${fpsEMA.toFixed(1)} | support: ${s.canMp4?'MP4✓':'MP4×'}/${s.canWebm?'WebM✓':'WebM×'}`;
   });
+
+  vid.addEventListener('loadeddata', ()=>{ vid.play().catch(()=>{}); });
+
 })();
 </script>
 </body>
