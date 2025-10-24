@@ -303,7 +303,6 @@
   const edgeCanvas  = document.createElement('canvas'); const edgeCtx  = edgeCanvas.getContext('2d', { willReadFrequently:true });
 
   function fit(){
-    // preview / UI render size = canvas client rect * DPR
     const dpr = Math.max(1, window.devicePixelRatio||1);
     const r = can.final.getBoundingClientRect();
     const W = Math.max(2, Math.ceil(r.width*dpr));
@@ -378,7 +377,6 @@
       return;
     }
 
-    // lock to current preview DPR backing resolution
     let W = can.final.width|0, H = can.final.height|0;
     if (W % 2) W--;
     if (H % 2) H--;
@@ -394,7 +392,6 @@
 
     const stream = recCanvas.captureStream(30);
 
-    // bitrate heuristic ~0.07 bpppf @30fps
     const vbr = Math.min(25_000_000,
                 Math.max(8_000_000, Math.floor(W*H*30*0.07)));
     chunks = [];
@@ -582,7 +579,6 @@
   }
   if(recallNowB){
     recallNowB.addEventListener('click', ()=>{
-      // force new burst now for live mode
       activeBurst = startRandomBurstFromBank(recallBank) || activeBurst;
     });
   }
@@ -680,13 +676,11 @@
     const sctx2 = srcCanvas.getContext('2d');
     const src  = sctx2.getImageData(0,0,W,H).data;
 
-    // luminance-or-alpha
     for(let i=0,j=0;i<src.length;i+=4,++j){
       const lum = src[i]*0.2126 + src[i+1]*0.7152 + src[i+2]*0.0722;
       const a   = src[i+3];
       edgeL[j] = Math.max(lum, a);
     }
-    // sobel-ish edge
     const TH=(+edgeThr.value|0)||40,
           TL=Math.max(0,(TH>>1));
     for(let y=1;y<H-1;y++){
@@ -705,7 +699,6 @@
         edgeE[idx]=aa;
       }
     }
-    // gate by src alpha
     for(let i=0,j=0;i<src.length;i+=4,++j){
       edgeE[j] = Math.round(edgeE[j]*(src[i+3]/255));
     }
@@ -730,11 +723,6 @@
   }
 
   /* ---------- Core frame render logic ---------- */
-  // renderCompositeFrame draws ONE frame of the effect graph into fctx given:
-  // - W,H (target canvas backing size)
-  // - tNow (video time in seconds, used for recall timestamps)
-  // - scalePx (ratio to scale pixel-based params like blur/expand to match preview "look")
-  // - stateBag: object holding refs so export can use its own local banks/ctxs
   function renderCompositeFrame(W,H,tNow,scalePx,stateBag){
     const {
       localBuf,
@@ -752,23 +740,20 @@
       forceSnapshotGhost
     } = stateBag;
 
-    // background grey
     const grey=+el.grey.value;
     fctx.clearRect(0,0,W,H);
     fctx.fillStyle=`rgb(${grey},${grey},${grey})`;
     fctx.fillRect(0,0,W,H);
 
-    // draw current video frame into proc with scaled blur
     const blurPx = (+el.preblur.value||0)*scalePx;
     drawVideoContained(pctx,vid,W,H,blurPx);
 
     const curr=pctx.getImageData(0,0,W,H);
-    // pushFrame into local buffer
+
     localBuf.push({t:tNow,data:new Uint8ClampedArray(curr.data),w:W,h:H});
     const cutoff=tNow-(MAX_SEC+2);
     while(localBuf.length && localBuf[0].t<cutoff) localBuf.shift();
 
-    // find past frame for ghost diff
     const deltaT=+el.dt.value;
     const target=tNow-deltaT;
     let past=null;
@@ -815,7 +800,6 @@
       }
       gctx.putImageData(ghostImg,0,0);
 
-      // stain accumulation
       if(stainOn.checked){
         const decay=+el.decay.value;
         sctx.globalCompositeOperation='destination-out';
@@ -852,44 +836,43 @@
       }
     }
 
-    // composite stain
     if(stainOn.checked){
       fctx.globalCompositeOperation='multiply';
       fctx.drawImage(can.stain,0,0);
       fctx.globalCompositeOperation='source-over';
     }
 
-    // composite ghost
     fctx.globalAlpha=+el.gAlpha.value;
     fctx.globalCompositeOperation=gBlend.value;
     fctx.drawImage(can.ghost,0,0);
     fctx.globalAlpha=1;
     fctx.globalCompositeOperation='source-over';
 
-    // snapshot ghost memory bank if movement
     if (changedCount>0 && forceSnapshotGhost){
       forceSnapshotGhost(tNow);
     }
 
-    /* recall layer */
-    // fade old recall content over time using recallLinger as timescale
     const lingerS=Math.max(0.2,+recallLinger.value||1.2);
-    // decay per frame ~ assuming fps ~30 -> dt ~1/30
-    const fade = 1-Math.exp(-(1/30)/(lingerS)); // deterministic
+    const fade = 1-Math.exp(-(1/30)/(lingerS));
     currRecallCtx.globalCompositeOperation='destination-out';
     currRecallCtx.fillStyle=`rgba(0,0,0,${fade})`;
     currRecallCtx.fillRect(0,0,currRecallCanvas.width,currRecallCanvas.height);
     currRecallCtx.globalCompositeOperation='source-over';
 
-    // probabilistic new burst
     if(recallOn && recallOn.checked){
       const prob=+recallProb.value||0;
       if(Math.random()<prob && !localActiveBurst.value){
-        localActiveBurst.value = startRandomBurstFromBank(localRecallBank) || localActiveBurst.value;
+        localActiveBurst.value = (function(){
+          if(!localRecallBank.length) return null;
+          const span=Math.max(0,+recallSpan.value||0);
+          const r=(Math.random()*localRecallBank.length)|0;
+          const t0=localRecallBank[r].t, t1=t0+span;
+          const frames=localRecallBank.filter(f=>f.t>=t0 && f.t<=t1).map(f=>f.img);
+          return {frames:frames.length?frames:[localRecallBank[r].img],i:0};
+        })() || localActiveBurst.value;
       }
     }
 
-    // draw burst frame into recall layer tinted
     if(localActiveBurst.value && localActiveBurst.value.frames && localActiveBurst.value.frames.length){
       const color=(recallColor && recallColor.value) ? recallColor.value : '#00e7ff';
       const frm = localActiveBurst.value.frames[ localActiveBurst.value.i ];
@@ -907,12 +890,10 @@
       }
     }
 
-    // composite recall
     fctx.globalCompositeOperation='screen';
     fctx.drawImage(currRecallCanvas,0,0);
     fctx.globalCompositeOperation='source-over';
 
-    /* haunt layer (linger accumulation over long time) */
     if(hauntOn && hauntOn.checked){
       const p     = Math.max(0, Math.min(1, +hauntPersist.value || 0.85));
       const stick = +hauntStick.value || 1.3;
@@ -923,13 +904,11 @@
       currHauntCtx.fillStyle=`rgba(0,0,0,${decayOut})`;
       currHauntCtx.fillRect(0,0,currHauntCanvas.width,currHauntCanvas.height);
 
-      // reinforce with current recall layer
       currHauntCtx.globalCompositeOperation='lighter';
       currHauntCtx.globalAlpha = Math.min(1, 0.55 * stick);
       currHauntCtx.drawImage(currRecallCanvas,0,0);
       currHauntCtx.globalAlpha = 1;
 
-      // tint haunt for final composite
       currTintCtx.clearRect(0,0,currTintCanvas.width,currTintCanvas.height);
       currTintCtx.globalCompositeOperation='copy';
       currTintCtx.drawImage(currHauntCanvas,0,0);
@@ -944,7 +923,6 @@
       fctx.globalCompositeOperation = 'source-over';
     }
 
-    /* outlines */
     currEdgeCtx.clearRect(0,0,currEdgeCanvas.width,currEdgeCanvas.height);
 
     if (ghostEdgeOn && ghostEdgeOn.checked){
@@ -979,8 +957,6 @@
       nosrc.style.display='none';
     }
 
-    // localActiveBurst for live mode is just {value: activeBurst}
-    // live recall bank is recallBank
     const liveStateBag = {
       localBuf: buf,
       localRecallBank: recallBank,
@@ -1002,11 +978,10 @@
     renderCompositeFrame(
       W,H,
       vid.currentTime||0,
-      1, // scalePx = 1 because preview is native preview scale
+      1,
       liveStateBag
     );
 
-    // stats
     const dt=now-lastT;
     lastT=now;
     const inst=dt>0?1000/dt:0;
@@ -1019,10 +994,58 @@
     vid.play().catch(()=>{});
   });
 
-  /* ---------- Deterministic 1:1 Export ---------- */
-  // We will NOT "play" the <video> in real-time.
-  // Instead we seek frame-by-frame at fixed FPS and render into can.final at source resolution.
-  // Then we blit that result into outCanvas for captureStream().
+  /* ---------- helpers for new export ---------- */
+
+  // match preview sharpness but lock AR to source
+  function pickExportDimsGoalB(prevSizes, vid) {
+    const ar = (vid.videoWidth || 1) / (vid.videoHeight || 1);
+
+    let w = prevSizes.W | 0;
+    let h = prevSizes.H | 0;
+
+    const previewAR = w / h;
+    if (Math.abs(previewAR - ar) > 0.001) {
+      if (previewAR > ar) {
+        // preview wider → trim width
+        w = Math.round(h * ar);
+      } else {
+        // preview taller → trim height
+        h = Math.round(w / ar);
+      }
+    }
+
+    if (w % 2) w -= 1;
+    if (h % 2) h -= 1;
+
+    return { W: w, H: h, scalePx: 1 };
+  }
+
+  function resizeAllWorkingBuffers(W, H) {
+    can.final.width  = W; can.final.height  = H;
+    can.stain.width  = W; can.stain.height  = H;
+    can.ghost.width  = W; can.ghost.height  = H;
+    proc.width       = W; proc.height       = H;
+    maskCanvas.width = W; maskCanvas.height = H;
+    colCanvas.width  = W; colCanvas.height  = H;
+    recallCanvas.width = W; recallCanvas.height = H;
+    hauntCanvas.width  = W; hauntCanvas.height  = H;
+    tintCanvas.width   = W; tintCanvas.height   = H;
+    edgeCanvas.width   = W; edgeCanvas.height   = H;
+    ensureEdgeBuffers(W, H, true);
+
+    // reset accumulators so export starts clean at t=0
+    buf.length = 0;
+    sctx.clearRect(0,0,W,H);
+    gctx.clearRect(0,0,W,H);
+    recallBank.length = 0;
+    recallCtx.clearRect(0,0,W,H);
+    activeBurst = null;
+    hauntCtx.clearRect(0,0,W,H);
+    tintCtx.clearRect(0,0,W,H);
+    edgeCtx.clearRect(0,0,W,H);
+  }
+
+  /* ---------- Deterministic 1:1-ish Export (Goal B look, AR-locked) ---------- */
   exportOneBtn.addEventListener('click', exportSourceOnce);
 
   async function exportSourceOnce(){
@@ -1037,13 +1060,14 @@
     if(vid.readyState<1){
       await new Promise(res=>vid.addEventListener('loadedmetadata',res,{once:true}));
     }
-    const vw=vid.videoWidth|0, vh=vid.videoHeight|0;
-    if(!vw||!vh){
+    const vW = vid.videoWidth|0;
+    const vH = vid.videoHeight|0;
+    if(!vW || !vH){
       alert('Video metadata unavailable.');
       return;
     }
 
-    const s=bestSupported();
+    const s = bestSupported();
     let mime='',ext='webm';
     if(s.canMp4){ mime=s.mp4; ext='mp4'; }
     else if(s.canWebm){ mime=s.webm; ext='webm'; }
@@ -1052,89 +1076,64 @@
       return;
     }
 
-    // Pause live preview updates while exporting
     const prevSuspend = suspendLive;
     suspendLive = true;
 
     exportOneBtn.disabled=true;
     recStartBtn.disabled=true;
 
-    // backup sizes to restore later
-    const prevSizes={
-      W:can.final.width, H:can.final.height,
-      sW:can.stain.width, sH:can.stain.height,
-      gW:can.ghost.width, gH:can.ghost.height,
-      pW:proc.width, pH:proc.height,
-      mW:maskCanvas.width, mH:maskCanvas.height,
-      cW:colCanvas.width, cH:colCanvas.height,
-      rW:recallCanvas.width, rH:recallCanvas.height,
-      hW:hauntCanvas.width, hH:hauntCanvas.height,
-      tW:tintCanvas.width, tH:tintCanvas.height,
-      eW:edgeCanvas.width, eH:edgeCanvas.height
+    const prevSizes = {
+      W: can.final.width,  H: can.final.height,
+      sW: can.stain.width, sH: can.stain.height,
+      gW: can.ghost.width, gH: can.ghost.height,
+      pW: proc.width,      pH: proc.height,
+      mW: maskCanvas.width,mH: maskCanvas.height,
+      cW: colCanvas.width, cH: colCanvas.height,
+      rW: recallCanvas.width, rH: recallCanvas.height,
+      hW: hauntCanvas.width,  hH: hauntCanvas.height,
+      tW: tintCanvas.width,   tH: tintCanvas.height,
+      eW: edgeCanvas.width,   eH: edgeCanvas.height
     };
 
-    // resize all working buffers to native src resolution
-    can.final.width=vw; can.final.height=vh;
-    can.stain.width=vw; can.stain.height=vh;
-    can.ghost.width=vw; can.ghost.height=vh;
-    proc.width=vw; proc.height=vh;
-    maskCanvas.width=vw; maskCanvas.height=vh;
-    colCanvas.width=vw; colCanvas.height=vh;
-    recallCanvas.width=vw; recallCanvas.height=vh;
-    hauntCanvas.width=vw; hauntCanvas.height=vh;
-    tintCanvas.width=vw; tintCanvas.height=vh;
-    edgeCanvas.width=vw; edgeCanvas.height=vh;
-    ensureEdgeBuffers(vw,vh,true);
+    // choose export dims based on preview resolution but source aspect ratio
+    const { W: outW, H: outH, scalePx } = pickExportDimsGoalB(prevSizes, vid);
 
-    // new local state specific to export pass
-    const exportBuf=[]; // separate buffer from live "buf"
-    const exportRecallBank=[];
-    let exportActiveBurst=null;
-    const exportActiveBurstRef={ value: exportActiveBurst };
+    resizeAllWorkingBuffers(outW, outH);
 
-    // clear accumulators so export starts clean at t=0
-    exportBuf.length=0;
-    sctx.clearRect(0,0,vw,vh);
-    gctx.clearRect(0,0,vw,vh);
-    exportRecallBank.length=0;
-    recallCtx.clearRect(0,0,vw,vh);
-    exportActiveBurstRef.value=null;
-    hauntCtx.clearRect(0,0,vw,vh);
-    tintCtx.clearRect(0,0,vw,vh);
-    edgeCtx.clearRect(0,0,vw,vh);
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width  = outW;
+    outCanvas.height = outH;
+    const octx = outCanvas.getContext('2d');
 
-    // prepare output canvas for capture
-    const outCanvas=document.createElement('canvas');
-    outCanvas.width=vw;
-    outCanvas.height=vh;
-    const octx=outCanvas.getContext('2d');
-
-    // bitrate scaling similar to live recorder
     const fps = 30;
-    const vbr = Math.min(25_000_000,
-                  Math.max(8_000_000, Math.floor(vw*vh*fps*0.07)));
+    const vbr = Math.min(
+      25_000_000,
+      Math.max(8_000_000, Math.floor(outW*outH*fps*0.07))
+    );
 
-    const stream=outCanvas.captureStream(fps);
-    const expChunks=[];
-    const expRecorder=new MediaRecorder(stream,{
-      mimeType:mime,
-      videoBitsPerSecond:vbr
+    const stream = outCanvas.captureStream(fps);
+    const expChunks = [];
+    const expRecorder = new MediaRecorder(stream,{
+      mimeType: mime,
+      videoBitsPerSecond: vbr
     });
 
-    const recDone=new Promise(resolve=>{
-      expRecorder.ondataavailable=e=>{
+    const recDone = new Promise(resolve=>{
+      expRecorder.ondataavailable = e=>{
         if(e.data && e.data.size) expChunks.push(e.data);
       };
-      expRecorder.onstop=resolve;
+      expRecorder.onstop = resolve;
     });
 
-    // We'll step tCursor manually instead of vid.play()
-    const duration = isFinite(vid.duration) ? vid.duration : 60; // fallback
+    const duration = isFinite(vid.duration) ? vid.duration : 60;
     const frameDt  = 1/fps;
-    let tCursor = 0;
-    let stopped = false;
+    let tCursor    = 0;
+    let stopped    = false;
 
-    // helper: seek video to specific time t, await decoded frame
+    const exportBuf = [];
+    const exportRecallBank = [];
+    const exportActiveBurstRef = { value:null };
+
     function seekToTime(t){
       return new Promise(res=>{
         function onSeek(){
@@ -1145,14 +1144,12 @@
         try{
           vid.currentTime = Math.min(duration, t);
         }catch(_){
-          // if browser won't let us set currentTime, just resolve
           vid.removeEventListener('seeked',onSeek);
           res();
         }
       });
     }
 
-    // state bag for renderCompositeFrame in export mode
     function makeExportStateBag(){
       return {
         localBuf: exportBuf,
@@ -1168,95 +1165,91 @@
         currEdgeCtx: edgeCtx,
         currEdgeCanvas: edgeCanvas,
         forceSnapshotGhost: async (tNow)=>{
-          // snapshotGhost but with exportRecallBank
-          await snapshotGhost(tNow, can.ghost, exportRecallBank);
+          try{
+            let img;
+            if('createImageBitmap' in window){
+              img = await createImageBitmap(can.ghost);
+            } else {
+              const c=document.createElement('canvas');
+              c.width=can.ghost.width;
+              c.height=can.ghost.height;
+              c.getContext('2d').drawImage(can.ghost,0,0);
+              img=c;
+            }
+            exportRecallBank.push({img,t:tNow});
+            const cap = (+recallCap.value|0)||40;
+            while(exportRecallBank.length>cap) exportRecallBank.shift();
+          }catch(_){}
         }
       };
     }
 
-    // render one frame at time tCursor, then blit to outCanvas
     async function renderFrameAtTime(tNow){
-      // renderCompositeFrame with scalePx = ratio between src vs preview
-      // keep visual feel of preview:
-      const prevScale = prevSizes.W>0 ? (vw/prevSizes.W) : 1;
       renderCompositeFrame(
-        vw, vh,
+        outW, outH,
         tNow,
-        prevScale,
+        scalePx,
         makeExportStateBag()
       );
 
-      // final blit to the capture canvas
-      octx.clearRect(0,0,vw,vh);
-      octx.drawImage(can.final,0,0,vw,vh);
+      octx.clearRect(0,0,outW,outH);
+      octx.drawImage(can.final,0,0,outW,outH);
     }
 
-    // main deterministic loop
-    async function stepLoop(){
-      if(stopped) return;
-      if(tCursor>duration+0.0001){
-        finalizeExport();
-        return;
-      }
-      await seekToTime(tCursor);
-      await renderFrameAtTime(tCursor);
-      tCursor += frameDt;
-      // yield so UI doesn't completely lock, but keep deterministic stepping
-      setTimeout(stepLoop,0);
-    }
-
-    // finalize / stop recorder / download / restore state
     function finalizeExport(){
       if(stopped) return;
       stopped = true;
       try{ expRecorder.stop(); }catch(_){}
     }
 
-    // after recorder finishes and blob is ready -> download & restore
     recDone.then(()=>{
       const blob=new Blob(expChunks,{type:mime});
       const a=document.createElement('a');
-      a.download=`wind_on_wall_1x_${vw}x${vh}_native_${Date.now()}.${ext}`;
+      a.download=`wind_on_wall_previewQual_ARlocked_${outW}x${outH}_${Date.now()}.${ext}`;
       a.href=URL.createObjectURL(blob);
       a.click();
 
-      // restore all canvas sizes back to preview mode
-      can.final.width=prevSizes.W; can.final.height=prevSizes.H;
-      can.stain.width=prevSizes.sW; can.stain.height=prevSizes.sH;
-      can.ghost.width=prevSizes.gW; can.ghost.height=prevSizes.gH;
-      proc.width=prevSizes.pW; proc.height=prevSizes.pH;
-      maskCanvas.width=prevSizes.mW; maskCanvas.height=prevSizes.mH;
-      colCanvas.width=prevSizes.cW; colCanvas.height=prevSizes.cH;
-      recallCanvas.width=prevSizes.rW; recallCanvas.height=prevSizes.rH;
-      hauntCanvas.width=prevSizes.hW; hauntCanvas.height=prevSizes.hH;
-      tintCanvas.width=prevSizes.tW; tintCanvas.height=prevSizes.tH;
-      edgeCanvas.width=prevSizes.eW; edgeCanvas.height=prevSizes.eH;
+      // restore preview buffers
+      can.final.width  = prevSizes.W; can.final.height  = prevSizes.H;
+      can.stain.width  = prevSizes.sW; can.stain.height = prevSizes.sH;
+      can.ghost.width  = prevSizes.gW; can.ghost.height = prevSizes.gH;
+      proc.width       = prevSizes.pW; proc.height      = prevSizes.pH;
+      maskCanvas.width = prevSizes.mW; maskCanvas.height= prevSizes.mH;
+      colCanvas.width  = prevSizes.cW; colCanvas.height = prevSizes.cH;
+      recallCanvas.width = prevSizes.rW; recallCanvas.height = prevSizes.rH;
+      hauntCanvas.width  = prevSizes.hW; hauntCanvas.height  = prevSizes.hH;
+      tintCanvas.width   = prevSizes.tW; tintCanvas.height   = prevSizes.tH;
+      edgeCanvas.width   = prevSizes.eW; edgeCanvas.height   = prevSizes.eH;
       ensureEdgeBuffers(can.final.width, can.final.height, true);
 
-      // after finishing export, resume live preview state
       suspendLive = prevSuspend;
       exportOneBtn.disabled=false;
       recStartBtn.disabled=false;
     });
 
-    // init deterministic export session
-    // pause the <video> so it doesn't free-run
     try{ vid.pause(); }catch(_){}
     vid.loop=false;
     vid.playbackRate=1;
 
-    // set recorder running
     expRecorder.start(250);
 
-    // reset tCursor to 0 & start stepping
-    tCursor = 0;
+    async function stepLoop(){
+      if(stopped) return;
+      if(tCursor > duration + 0.0001){
+        finalizeExport();
+        return;
+      }
+
+      await seekToTime(tCursor);
+      await renderFrameAtTime(tCursor);
+
+      tCursor += frameDt;
+      setTimeout(stepLoop,0);
+    }
     stepLoop();
 
-    // safety timeout in case we never naturally finish (e.g. weird browser seek fail)
     const safetyMs = duration*1000 + 15000;
-    setTimeout(()=>{
-      finalizeExport();
-    }, safetyMs);
+    setTimeout(()=>{ finalizeExport(); }, safetyMs);
   }
 
 })();
